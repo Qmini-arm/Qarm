@@ -1,0 +1,288 @@
+<?xml version="1.0"?>
+<robot name="qmini_arm">
+  <!--
+    Generated from Qmini-arm.SLDASM.
+    Joint zero matches the saved CAD pose. All meshes and dimensions use SI units.
+  -->
+  <material name="motor_gray">
+    <color rgba="0.27 0.29 0.32 1.0"/>
+  </material>
+  <material name="link_silver">
+    <color rgba="0.72 0.74 0.77 1.0"/>
+  </material>
+  <material name="tool_gray">
+    <color rgba="0.40 0.43 0.47 1.0"/>
+  </material>
+  <!-- Fixed GO-M8010-6 motor housing. -->
+  <link name="base_link">
+    <inertial>
+      <origin rpy="0 0 0" xyz="0.001694875 0.000113148 0.000030767"/>
+      <mass value="0.5"/>
+      <inertia ixx="0.000552544" ixy="-7.06e-07" ixz="-2.61e-07" iyy="0.000317218" iyz="-5.587e-06" izz="0.000316759"/>
+    </inertial>
+    <visual>
+      <origin rpy="0 0 0" xyz="0 0 0"/>
+      <geometry>
+        <mesh filename="meshes/visual/motor.stl"/>
+      </geometry>
+      <material name="motor_gray"/>
+    </visual>
+    <collision>
+      <origin rpy="0 1.570796327 0" xyz="0 0 0"/>
+      <geometry>
+        <cylinder length="0.0423" radius="0.04825"/>
+      </geometry>
+    </collision>
+  </link>
+  <!-- Output of motor 1: first orthogonal bracket and motor 2 housing. -->
+  <link name="link_1">
+    <inertial>
+      <origin rpy="0 0 0" xyz="0.075587838 0.000106623 0.000545006"/>
+      <mass value="0.585848904"/>
+      <inertia ixx="0.000390445" ixy="-2.165e-06" ixz="-3.57e-06" iyy="0.000629433" iyz="0.000134515" izz="0.000673929"/>
+    </inertial>
+    <visual>
+      <origin rpy="0 -0.702123322 -1.570796327" xyz="0.021150004 -0.000400374 -0.000138396"/>
+      <geometry>
+        <mesh filename="meshes/visual/joint_bracket.stl"/>
+      </geometry>
+      <material name="link_silver"/>
+    </visual>
+    <visual>
+      <origin rpy="2.297484930 -0.868673004 1.570796327" xyz="0.082449884 -0.000852249 -0.000673012"/>
+      <geometry>
+        <mesh filename="meshes/visual/motor.stl"/>
+      </geometry>
+      <material name="motor_gray"/>
+    </visual>
+    <collision>
+      <origin rpy="0 -0.702123322 -1.570796327" xyz="0.041150004 -0.000400374 -0.000138396"/>
+      <geometry>
+        <box size="0.09 0.04 0.043"/>
+      </geometry>
+    </collision>
+    <collision>
+      <origin rpy="0.563778620 -0.443490870 -2.545301700" xyz="0.082449884 -0.000852249 -0.000673012"/>
+      <geometry>
+        <cylinder length="0.0423" radius="0.04825"/>
+      </geometry>
+    </collision>
+  </link>
+  <!-- Output of motor 2: first long arm and motor 3 housing. -->
+  <link name="link_2">
+    <inertial>
+      <origin rpy="0 0 0" xyz="0.017320335 0.187087057 -0.166220843"/>
+      <mass value="0.725038699"/>
+      <inertia ixx="0.007191282" ixy="0.000370476" ixz="-0.000328071" iyy="0.00332923" iyz="0.00310238" izz="0.00406504"/>
+    </inertial>
+    <visual>
+      <origin rpy="3.141592654 0.726688605 1.570796327" xyz="0.026150004 0.224214862 -0.199318093"/>
+      <geometry>
+        <mesh filename="meshes/visual/arm_link.stl"/>
+      </geometry>
+      <material name="link_silver"/>
+    </visual>
+    <visual>
+      <origin rpy="1.453370820 0 -3.141592654" xyz="0.013000008 0.224214994 -0.199318371"/>
+      <geometry>
+        <mesh filename="meshes/visual/motor.stl"/>
+      </geometry>
+      <material name="motor_gray"/>
+    </visual>
+    <collision>
+      <origin rpy="3.141592654 0.726688605 1.570796327" xyz="0.028650000 0.112108070 -0.099658330"/>
+      <geometry>
+        <box size="0.3003 0.015 0.075"/>
+      </geometry>
+    </collision>
+    <collision>
+      <origin rpy="1.570796327 0.117425510 -1.570796327" xyz="0.013000008 0.224214994 -0.199318371"/>
+      <geometry>
+        <cylinder length="0.0423" radius="0.04825"/>
+      </geometry>
+    </collision>
+  </link>
+  <!-- Output of motor 3: second orthogonal bracket and motor 4 housing. -->
+  <link name="link_3">
+    <inertial>
+      <origin rpy="0 0 0" xyz="0.075420473 0.002699494 0.002954370"/>
+      <mass value="0.585848904"/>
+      <inertia ixx="0.000391982" ixy="-1.0197e-05" ixz="-1.1785e-05" iyy="0.000634832" iyz="0.000134596" izz="0.000667344"/>
+    </inertial>
+    <visual>
+      <origin rpy="0 -0.726682211 -1.570796327" xyz="0.021150004 0.000000013 -0.000000002"/>
+      <geometry>
+        <mesh filename="meshes/visual/joint_bracket.stl"/>
+      </geometry>
+      <material name="link_silver"/>
+    </visual>
+    <visual>
+      <origin rpy="-0.844107722 -0.844114116 1.570796327" xyz="0.082450124 0.001988742 0.002237564"/>
+      <geometry>
+        <mesh filename="meshes/visual/motor.stl"/>
+      </geometry>
+      <material name="motor_gray"/>
+    </visual>
+    <collision>
+      <origin rpy="0 -0.726682211 -1.570796327" xyz="0.041150004 0.000000013 -0.000000002"/>
+      <geometry>
+        <box size="0.09 0.04 0.043"/>
+      </geometry>
+    </collision>
+    <collision>
+      <origin rpy="-0.586424700 0.457182900 0.586433260" xyz="0.082450124 0.001988742 0.002237564"/>
+      <geometry>
+        <cylinder length="0.0423" radius="0.04825"/>
+      </geometry>
+    </collision>
+  </link>
+  <!-- Output of motor 4: second long arm and motor 5 housing. -->
+  <link name="link_4">
+    <inertial>
+      <origin rpy="0 0 0" xyz="0.017320335 -0.237495080 -0.078911412"/>
+      <mass value="0.725038699"/>
+      <inertia ixx="0.007191282" ixy="-0.000469355" ixz="-0.000156809" iyy="0.001194371" iyz="-0.001869837" izz="0.006199898"/>
+    </inertial>
+    <visual>
+      <origin rpy="0 0.320515340 -1.570796327" xyz="0.026150004 -0.284721942 -0.094516711"/>
+      <geometry>
+        <mesh filename="meshes/visual/arm_link.stl"/>
+      </geometry>
+      <material name="link_silver"/>
+    </visual>
+    <visual>
+      <origin rpy="-2.735419390 0 3.141592654" xyz="0.013000008 -0.284722248 -0.094516687"/>
+      <geometry>
+        <mesh filename="meshes/visual/motor.stl"/>
+      </geometry>
+      <material name="motor_gray"/>
+    </visual>
+    <collision>
+      <origin rpy="0 0.320515340 -1.570796327" xyz="0.028650000 -0.142360960 -0.047258360"/>
+      <geometry>
+        <box size="0.3003 0.015 0.075"/>
+      </geometry>
+    </collision>
+    <collision>
+      <origin rpy="-1.570796327 -1.164623060 1.570796327" xyz="0.013000008 -0.284722248 -0.094516687"/>
+      <geometry>
+        <cylinder length="0.0423" radius="0.04825"/>
+      </geometry>
+    </collision>
+  </link>
+  <!-- Output of motor 5: third orthogonal bracket and motor 6 housing. -->
+  <link name="link_5">
+    <inertial>
+      <origin rpy="0 0 0" xyz="0.075587838 -0.000319057 0.000788844"/>
+      <mass value="0.585848904"/>
+      <inertia ixx="0.000390445" ixy="1.919e-06" ixz="-3.708e-06" iyy="0.00054219" iyz="-8.1247e-05" izz="0.000761172"/>
+    </inertial>
+    <visual>
+      <origin rpy="0 0.320515340 -1.570796327" xyz="0.021150004 0.000000013 -0.000000002"/>
+      <geometry>
+        <mesh filename="meshes/visual/joint_bracket.stl"/>
+      </geometry>
+      <material name="link_silver"/>
+    </visual>
+    <visual>
+      <origin rpy="-0.844107722 -1.250280990 -1.570796327" xyz="0.082449884 0.000220822 -0.000664268"/>
+      <geometry>
+        <mesh filename="meshes/visual/motor.stl"/>
+      </geometry>
+      <material name="motor_gray"/>
+    </visual>
+    <collision>
+      <origin rpy="0 0.320515340 -1.570796327" xyz="0.041150004 0.000000013 -0.000000002"/>
+      <geometry>
+        <box size="0.09 0.04 0.043"/>
+      </geometry>
+    </collision>
+    <collision>
+      <origin rpy="-0.243190450 0.210882060 -2.440767920" xyz="0.082449884 0.000220822 -0.000664268"/>
+      <geometry>
+        <cylinder length="0.0423" radius="0.04825"/>
+      </geometry>
+    </collision>
+  </link>
+  <!-- Output of motor 6: end-effector mounting bracket. -->
+  <link name="link_6">
+    <inertial>
+      <origin rpy="0 0 0" xyz="0.021297679 0.013029405 -0.011594202"/>
+      <mass value="0.021258163"/>
+      <inertia ixx="1.8357e-05" ixy="-1.494e-06" ixz="1.332e-06" iyy="9.521e-06" iyz="5.556e-06" izz="1.0847e-05"/>
+    </inertial>
+    <visual>
+      <origin rpy="0 0.726688605 1.570796327" xyz="0.026150004 0.000000013 -0.000000002"/>
+      <geometry>
+        <mesh filename="meshes/visual/tool_mount.stl"/>
+      </geometry>
+      <material name="tool_gray"/>
+    </visual>
+    <collision>
+      <origin rpy="0 0.726688605 1.570796327" xyz="0.008650000 0.011444880 -0.010174160"/>
+      <geometry>
+        <box size="0.0894 0.035 0.059"/>
+      </geometry>
+    </collision>
+  </link>
+  <link name="tool0"/>
+  <joint name="joint_1" type="revolute">
+    <origin rpy="0 0 0" xyz="0 0 0"/>
+    <parent link="base_link"/>
+    <child link="link_1"/>
+    <axis xyz="1 0 0"/>
+    <limit effort="23.7" lower="-2.617993878" upper="2.617993878" velocity="3.0"/>
+    <dynamics damping="0.08" friction="0.0"/>
+    <safety_controller k_position="20.0" k_velocity="2.0" soft_lower_limit="-2.530727415" soft_upper_limit="2.530727415"/>
+  </joint>
+  <joint name="joint_2" type="revolute">
+    <origin rpy="2.297484930 -0.868673004 1.570796327" xyz="0.082449884 -0.000852249 -0.000673012"/>
+    <parent link="link_1"/>
+    <child link="link_2"/>
+    <axis xyz="1 0 0"/>
+    <limit effort="23.7" lower="-2.617993878" upper="2.617993878" velocity="3.0"/>
+    <dynamics damping="0.08" friction="0.0"/>
+    <safety_controller k_position="20.0" k_velocity="2.0" soft_lower_limit="-2.530727415" soft_upper_limit="2.530727415"/>
+  </joint>
+  <joint name="joint_3" type="revolute">
+    <origin rpy="1.453370820 0 -3.141592654" xyz="0.013000008 0.224214994 -0.199318371"/>
+    <parent link="link_2"/>
+    <child link="link_3"/>
+    <axis xyz="1 0 0"/>
+    <limit effort="23.7" lower="-2.617993878" upper="2.617993878" velocity="3.0"/>
+    <dynamics damping="0.08" friction="0.0"/>
+    <safety_controller k_position="20.0" k_velocity="2.0" soft_lower_limit="-2.530727415" soft_upper_limit="2.530727415"/>
+  </joint>
+  <joint name="joint_4" type="revolute">
+    <origin rpy="-0.844107722 -0.844114116 1.570796327" xyz="0.082450124 0.001988742 0.002237564"/>
+    <parent link="link_3"/>
+    <child link="link_4"/>
+    <axis xyz="1 0 0"/>
+    <limit effort="23.7" lower="-2.617993878" upper="2.617993878" velocity="3.0"/>
+    <dynamics damping="0.08" friction="0.0"/>
+    <safety_controller k_position="20.0" k_velocity="2.0" soft_lower_limit="-2.530727415" soft_upper_limit="2.530727415"/>
+  </joint>
+  <joint name="joint_5" type="revolute">
+    <origin rpy="-2.735419390 0 3.141592654" xyz="0.013000008 -0.284722248 -0.094516687"/>
+    <parent link="link_4"/>
+    <child link="link_5"/>
+    <axis xyz="1 0 0"/>
+    <limit effort="23.7" lower="-2.617993878" upper="2.617993878" velocity="3.0"/>
+    <dynamics damping="0.08" friction="0.0"/>
+    <safety_controller k_position="20.0" k_velocity="2.0" soft_lower_limit="-2.530727415" soft_upper_limit="2.530727415"/>
+  </joint>
+  <joint name="joint_6" type="revolute">
+    <origin rpy="-0.844107722 -1.250280990 -1.570796327" xyz="0.082449884 0.000220822 -0.000664268"/>
+    <parent link="link_5"/>
+    <child link="link_6"/>
+    <axis xyz="1 0 0"/>
+    <limit effort="23.7" lower="-2.617993878" upper="2.617993878" velocity="3.0"/>
+    <dynamics damping="0.08" friction="0.0"/>
+    <safety_controller k_position="20.0" k_velocity="2.0" soft_lower_limit="-2.530727415" soft_upper_limit="2.530727415"/>
+  </joint>
+  <joint name="tool0_fixed_joint" type="fixed">
+    <origin rpy="0 0.726688605 1.570796327" xyz="0.008650004 0.044842728 -0.039863907"/>
+    <parent link="link_6"/>
+    <child link="tool0"/>
+  </joint>
+</robot>

@@ -58,26 +58,36 @@ unitree_actuator_sdk + RS-485 + M8010
 
 只处理 SI 单位的数学轨迹，不依赖串口和 SDK。后续五次多项式、梯形速度、S 曲线和笛卡尔插补应采用相同方式实现为纯计算模块，方便离线测试。
 
-## 建议的下一阶段模块
+## Python 机械臂算法模块（已实现）
+
+当前算法层位于 `python/qmini_arm_motion/`，以两个深模块承载主要复杂度：
+
+- `MotionPlanner.plan(start_q, target_position)`：隐藏 IK 分支连续性、自碰撞检查、
+  笛卡尔路点、RRT 兜底和时间参数化；
+- `M8010CommandMapper.frames(trajectory)`：隐藏 ID、方向、减速比、机械零位和
+  转子侧参数换算。
+
+可视化和命令行只跨这两个 interface，不复制运动学或电机换算公式。详见
+[运动规划说明](motion_planning.md)。
+
+## 后续真机控制模块
 
 ```text
 include/qmini_arm/
 ├── arm_config.hpp          # 六关节 ID/方向/零位/限位配置
 ├── joint_group.hpp         # 一次控制周期的六轴状态与命令
-├── arm_model.hpp           # URDF 关节顺序、FK/Jacobian
-├── ik_solver.hpp           # 位姿到关节目标，含解选择和限位过滤
-├── trajectory_executor.hpp # 时间参数化、插值和命令下发
+├── arm_model.hpp           # 若需要全 C++ 实时控制，可适配 Python 已验证模型
+├── trajectory_executor.hpp # 消费规划轨迹并按周期命令下发
 └── control_state_machine.hpp
 ```
 
 推荐实施顺序：
 
-1. 为六个 URDF 关节建立持久化的 ID、方向、回零值和软限位配置；
+1. 实机标定六个 URDF 关节的 ID、方向、回零值，并更新现有 YAML 配置；
 2. 增加只读状态聚合器，一次轮询形成带时间戳的六轴 `JointState`；
-3. 验证 FK 与实际机械尺寸、转轴方向和零位一致；
-4. 实现有速度/加速度限制的关节空间点到点轨迹；
-5. 加入 IK，并对所有候选解执行关节限位和连续性筛选；
-6. 最后接入 ROS 2 `ros2_control`、MoveIt 或自定义上层接口。
+3. 用实机反馈验证 FK 数字孪生、机械尺寸、转轴方向和零位一致；
+4. 实现消费现有规划轨迹的单线程硬件 adapter，并接回安全检查；
+5. 低速、无负载验证后，再接入 ROS 2 `ros2_control` 或自定义上层接口。
 
 ## 控制器边界
 
@@ -105,4 +115,3 @@ include/qmini_arm/
 3. `q_joint`：应用方向和机械零位后的 URDF 关节角。
 
 只有第三项可以输入 FK、IK 或发布为机器人关节状态。每次上电后需要通过机械限位、原点传感器或输出侧绝对编码器重建可靠的零位；单纯保存一次很大的累计转子角不能保证跨掉电有效。
-

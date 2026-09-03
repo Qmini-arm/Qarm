@@ -1,0 +1,52 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "qmini-arm-motion"
+version = "0.1.0"
+description = "Collision-aware FK, IK, planning and visualization for the Qmini M8010 arm"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "numpy>=1.26",
+  "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+viz = [
+  "viser>=0.2",
+  "yourdfpy>=0.0.53",
+]
+dev = [
+  "pytest>=8",
+  "ruff>=0.6",
+]
+
+[project.scripts]
+qmini-motion = "qmini_arm_motion.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["python"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests/python"]
+# ROS Humble injects Python 3.10 pytest entry points through PYTHONPATH even
+# when this Python 3.14 virtualenv is active. They are unrelated to these
+# offline tests and cannot be imported by the other interpreter version.
+addopts = [
+  "-p", "no:launch_ros",
+  "-p", "no:launch_testing",
+  "-p", "no:ament_flake8",
+  "-p", "no:ament_pep257",
+  "-p", "no:ament_xmllint",
+  "-p", "no:ament_lint",
+  "-p", "no:ament_copyright",
+]

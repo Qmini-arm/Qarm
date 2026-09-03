@@ -1,11 +1,15 @@
 # Qmini Unitree Arm
 
-`Qmini_unitree_arm` 是面向 Qmini 六轴机械臂后续开发的 C++14 工程骨架。当前阶段完成了 GO-M8010-6 通信封装、转子/关节坐标换算、安全检查、单电机状态读取和六电机正弦位置测试。工程引用相邻的 `unitree_actuator_sdk`，不会修改 SDK 仓库。
+`Qmini_unitree_arm` 是面向 Qmini 六轴机械臂后续开发的混合工程。C++14 层完成了
+GO-M8010-6 通信、转子/关节坐标换算和台架测试；Python 层完成了基于 URDF 的 FK、
+无自碰撞工作空间采样、位置 IK、轨迹规划、M8010 命令生成和浏览器实时可视化。
+工程引用相邻的 `unitree_actuator_sdk`，不会修改 SDK 仓库。
 
 当前可执行程序：
 
 - `qmini_motor_state`：读取指定串口、指定 ID 的电机状态；
 - `qmini_sine_position`：让 ID 0–5 执行相同的相对正弦位置测试。
+- `qmini-motion`：离线 FK/IK、可达空间、轨迹与可视化入口（不打开串口）。
 
 ## 目录结构
 
@@ -25,8 +29,11 @@ Qmini_unitree_arm/
 │   ├── read_motor_state.cpp      # 状态读取工具
 │   ├── sine_position_test.cpp    # 六电机正弦位置测试
 │   └── cli_utils.hpp             # 两个工具共用的参数解析
-├── tests/core_tests.cpp          # 不打开串口的核心单元测试
-└── docs/architecture.md          # 后续 IK/关节控制扩展边界
+├── tests/                        # C++ 和 Python 离线测试
+├── docs/                         # 架构与运动规划说明
+├── config/m8010_arm.yaml         # 六关节 ID、方向、零位和控制参数
+├── python/qmini_arm_motion/      # FK/IK/碰撞/规划/命令/可视化
+└── pyproject.toml
 ```
 
 应用只依赖 `qmini_arm_core` 的公开头文件，不直接使用 `MotorCmd`、`MotorData` 或 `SerialPort`。未来替换通信后端、增加仿真后端或 ROS 2 适配时，不需要改动 IK 和轨迹层。
@@ -46,6 +53,58 @@ ctest --test-dir Qmini_unitree_arm/build --output-on-failure
 cmake -S Qmini_unitree_arm -B Qmini_unitree_arm/build \
   -DUNITREE_ACTUATOR_SDK_ROOT=/absolute/path/to/unitree_actuator_sdk
 ```
+
+## FK、IK、无自碰撞规划与可视化
+
+Python 运动层沿用了 `/home/wyt06/Qmini-arm` 中经过验证的“URDF 模型—阻尼最小二乘
+IK—工作空间采样—Viser”思路，并针对当前 M8010 URDF 增加圆柱碰撞体、连续路径碰撞
+检查、RRT-Connect 兜底规划和转子侧控制参数输出。
+
+安装在独立虚拟环境中：
+
+```bash
+cd /home/wyt06/unitree-arm/Qmini_unitree_arm
+python3 -m venv .venv
+.venv/bin/python -m pip install -e '.[dev,viz]'
+.venv/bin/pytest -q
+```
+
+查看零位 FK：
+
+```bash
+.venv/bin/qmini-motion fk --q-deg 0 0 0 0 0 0
+```
+
+采样 100000 个关节姿态，以 FK 构建无自碰撞可达区域并保存：
+
+```bash
+.venv/bin/qmini-motion workspace \
+  --samples 100000 \
+  --output build/collision_free_workspace.npz
+```
+
+从 URDF 零位规划到 `base_link` 坐标系中的目标点，并导出每个控制周期、每台电机的
+控制参数：
+
+```bash
+.venv/bin/qmini-motion plan \
+  --start-deg 0 0 0 0 0 0 \
+  --target 0.10 -0.45 0.20 \
+  --output build/m8010_commands.csv
+```
+
+启动可视化：
+
+```bash
+.venv/bin/qmini-motion viz --host 127.0.0.1 --port 8080
+```
+
+浏览器中可拖动目标点、规划并播放轨迹、显示无自碰撞可达空间，并实时查看 ID 0–5
+的关节目标、转子位置/相对偏移、目标速度、`kp`、`kd` 和前馈力矩。可视化和 CSV
+导出均不会打开 `/dev/ttyUSB0`。
+
+完整的算法边界、控制参数语义和真机接入条件见
+[运动规划说明](docs/motion_planning.md)。
 
 ## 读取电机状态
 
@@ -161,7 +220,10 @@ qmini_arm::JointState joint =
 
 - M8010 的反馈位置是转子侧累计位置，启动值不是 URDF 关节零位；
 - 电机转子侧单圈绝对编码不能替代机械臂回零或输出侧绝对编码器；
-- 当前工程没有实现碰撞检测、重力补偿、动力学限幅或硬实时调度；
+- Python 运动层只处理自碰撞；尚未处理地面、工装、线缆、负载、重力补偿、外部障碍
+  和硬实时调度；
+- 可达空间点云是对连续工作空间的有限采样，不是解析边界或安全证明；
+- `config/m8010_arm.yaml` 默认未标定，绝对转子位置不会生成；完成六轴方向、机械零位
+  和关节限位标定前，规划结果不得发送到真机；
 - 当前正弦程序是台架验证工具，不是机械臂控制器；
 - 进程、USB 或供电异常时无法保证最后的零输出命令送达，必须提供物理断电和机械限位。
-

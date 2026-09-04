@@ -1,8 +1,9 @@
 # Qmini Unitree Arm
 
-`Qmini_unitree_arm` 是面向 Qmini 六轴机械臂后续开发的混合工程。C++14 层完成了
+`Qarm` 是面向 Qmini 六轴机械臂后续开发的混合工程。C++14 层完成了
 GO-M8010-6 通信、转子/关节坐标换算和台架测试；Python 层完成了基于 URDF 的 FK、
-无自碰撞工作空间采样、位置 IK、轨迹规划、M8010 命令生成和浏览器实时可视化。
+无自碰撞工作空间采样、位置 IK、轨迹规划、M8010 命令生成和带重力的初步关节动力学
+可视化。
 工程引用相邻的 `unitree_actuator_sdk`，不会修改 SDK 仓库。
 
 当前可执行程序：
@@ -14,7 +15,7 @@ GO-M8010-6 通信、转子/关节坐标换算和台架测试；Python 层完成�
 ## 目录结构
 
 ```text
-Qmini_unitree_arm/
+Qarm/
 ├── CMakeLists.txt
 ├── cmake/
 │   └── UnitreeActuatorSDK.cmake  # SDK 路径、架构和共享库导入
@@ -31,42 +32,112 @@ Qmini_unitree_arm/
 │   └── cli_utils.hpp             # 两个工具共用的参数解析
 ├── tests/                        # C++ 和 Python 离线测试
 ├── docs/                         # 架构与运动规划说明
+├── HANDOFF.md                    # 当前目标、进度、下一阶段和安全边界
 ├── config/m8010_arm.yaml         # 六关节 ID、方向、零位和控制参数
-├── python/qmini_arm_motion/      # FK/IK/碰撞/规划/命令/可视化
+├── description/                  # xacro/URDF 机械臂模型与可视网格
+├── python/qmini_arm_motion/      # FK/IK/碰撞/规划/命令/动力学/可视化
 └── pyproject.toml
 ```
 
 应用只依赖 `qmini_arm_core` 的公开头文件，不直接使用 `MotorCmd`、`MotorData` 或 `SerialPort`。未来替换通信后端、增加仿真后端或 ROS 2 适配时，不需要改动 IK 和轨迹层。
 
-## 编译与离线测试
+## 平台支持
+
+| 功能 | Linux x86_64/aarch64 | macOS |
+|---|---:|---:|
+| Python FK/IK、规划、测试 | 支持 | 支持 |
+| Viser 可视化和初步动力学 | 支持 | 支持 |
+| C++ 电机层编译 | 支持 | 不支持现有 SDK |
+| M8010 串口实机工具 | 支持 | 不支持现有 SDK |
+
+macOS 的限制来自 Unitree 官方仓库当前只提供 Linux x86_64 和 aarch64 的预编译 `.so`；
+与 Python 离线运动层无关。真机控制建议使用 Ubuntu 22.04/24.04 或等价 Linux 环境。
+
+## 从零安装
+
+项目要求 Python 3.10 或更高版本。Python 离线层不需要 Unitree SDK，也不会打开串口。
+
+### Linux：Python 离线层
+
+Ubuntu/Debian 安装基础工具并克隆仓库：
 
 ```bash
-cd /home/wyt06/unitree-arm
-cmake -S Qmini_unitree_arm -B Qmini_unitree_arm/build
-cmake --build Qmini_unitree_arm/build -j2
-ctest --test-dir Qmini_unitree_arm/build --output-on-failure
+sudo apt update
+sudo apt install -y git python3 python3-venv python3-pip
+
+git clone https://github.com/Qmini-arm/Qarm.git
+cd Qarm
+python3 -m venv .venv
+.venv/bin/python -m pip install --upgrade pip
+.venv/bin/python -m pip install -e '.[dev,viz]'
 ```
 
-默认 SDK 路径是 `/home/wyt06/unitree-arm/unitree_actuator_sdk`。若 SDK 位于其他位置：
+验证安装：
 
 ```bash
-cmake -S Qmini_unitree_arm -B Qmini_unitree_arm/build \
+.venv/bin/ruff check python tests/python
+.venv/bin/pytest -q
+.venv/bin/qmini-motion fk --q-deg 0 0 0 0 0 0
+```
+
+### macOS：Python 离线层
+
+先安装 Xcode Command Line Tools，并通过 [Homebrew](https://brew.sh/) 安装 Git 和 Python：
+
+```bash
+xcode-select --install
+brew install git python
+
+git clone https://github.com/Qmini-arm/Qarm.git
+cd Qarm
+python3 -m venv .venv
+.venv/bin/python -m pip install --upgrade pip
+.venv/bin/python -m pip install -e '.[dev,viz]'
+.venv/bin/ruff check python tests/python
+.venv/bin/pytest -q
+```
+
+如果系统已安装满足版本要求的 Git 和 Python，可以跳过 Homebrew 对应步骤。
+
+### Linux：C++ 电机层和真机工具
+
+完成上述 Linux Python 安装后，额外安装编译工具，并把 Unitree SDK 与本仓库放在同一
+父目录：
+
+```bash
+sudo apt install -y build-essential cmake
+
+cd ..
+git clone https://github.com/unitreerobotics/unitree_actuator_sdk.git
+cd Qarm
+cmake -S . -B build
+cmake --build build -j2
+ctest --test-dir build --output-on-failure
+```
+
+默认 SDK 路径是与 `Qarm/` 相邻的 `unitree_actuator_sdk/`。若 SDK 位于其他位置：
+
+```bash
+cmake -S . -B build \
   -DUNITREE_ACTUATOR_SDK_ROOT=/absolute/path/to/unitree_actuator_sdk
+```
+
+Linux 下访问 USB 串口通常还需要把当前用户加入 `dialout` 组，执行后注销并重新登录：
+
+```bash
+sudo usermod -aG dialout "$USER"
 ```
 
 ## FK、IK、无自碰撞规划与可视化
 
-Python 运动层沿用了 `/home/wyt06/Qmini-arm` 中经过验证的“URDF 模型—阻尼最小二乘
-IK—工作空间采样—Viser”思路，并针对当前 M8010 URDF 增加圆柱碰撞体、连续路径碰撞
-检查、RRT-Connect 兜底规划和转子侧控制参数输出。
+Python 运动层采用“URDF 模型—阻尼最小二乘 IK—工作空间采样—Viser”流程，并针对
+当前 M8010 URDF 增加圆柱碰撞体、连续路径碰撞检查、RRT-Connect 兜底规划和转子侧
+控制参数输出。
 
-安装在独立虚拟环境中：
+`description/qmini_arm.urdf.xacro` 是模型源；修改它后生成非 ROS 运行层使用的 URDF：
 
 ```bash
-cd /home/wyt06/unitree-arm/Qmini_unitree_arm
-python3 -m venv .venv
-.venv/bin/python -m pip install -e '.[dev,viz]'
-.venv/bin/pytest -q
+.venv/bin/xacro description/qmini_arm.urdf.xacro -o description/qmini_arm.urdf
 ```
 
 查看零位 FK：
@@ -89,7 +160,7 @@ python3 -m venv .venv
 ```bash
 .venv/bin/qmini-motion plan \
   --start-deg 0 0 0 0 0 0 \
-  --target 0.10 -0.45 0.20 \
+  --target 0.668 0.105 -0.163 \
   --output build/m8010_commands.csv
 ```
 
@@ -100,8 +171,9 @@ python3 -m venv .venv
 ```
 
 浏览器中可拖动目标点、规划并播放轨迹、显示无自碰撞可达空间，并实时查看 ID 0–5
-的关节目标、转子位置/相对偏移、目标速度、`kp`、`kd` 和前馈力矩。可视化和 CSV
-导出均不会打开 `/dev/ttyUSB0`。
+的关节目标、仿真角、跟踪误差、电机关节力矩、重力负载和转子侧命令。动力学使用 xacro
+中的质量/质心/惯量/阻尼/力矩与速度限制，重力在 `world` 中为 `-Z`。可视化和 CSV 导出均
+不会打开 `/dev/ttyUSB0`。
 
 完整的算法边界、控制参数语义和真机接入条件见
 [运动规划说明](docs/motion_planning.md)。
@@ -111,7 +183,7 @@ python3 -m venv .venv
 读取 `/dev/ttyUSB0` 上 ID 0 的一个状态样本：
 
 ```bash
-./Qmini_unitree_arm/build/qmini_motor_state \
+./build/qmini_motor_state \
   --port /dev/ttyUSB0 \
   --id 0
 ```
@@ -121,7 +193,7 @@ python3 -m venv .venv
 持续读取，并把启动时位置临时定义为关节 0°：
 
 ```bash
-./Qmini_unitree_arm/build/qmini_motor_state \
+./build/qmini_motor_state \
   --port /dev/ttyUSB0 \
   --id 0 \
   --samples 0 \
@@ -134,7 +206,7 @@ python3 -m venv .venv
 如果已经通过可靠的机械找零获得转子零位，可以显式换算关节角：
 
 ```bash
-./Qmini_unitree_arm/build/qmini_motor_state \
+./build/qmini_motor_state \
   --port /dev/ttyUSB0 \
   --id 0 \
   --samples 100 \
@@ -168,13 +240,13 @@ joint_tau_ideal_nm,temp_c,merror,mode,exchange_ms
 先做不打开串口的轨迹检查：
 
 ```bash
-./Qmini_unitree_arm/build/qmini_sine_position --dry-run
+./build/qmini_sine_position --dry-run
 ```
 
 实机测试命令：
 
 ```bash
-./Qmini_unitree_arm/build/qmini_sine_position \
+./build/qmini_sine_position \
   --port /dev/ttyUSB0 \
   --ids 0,1,2,3,4,5 \
   --amplitude-deg 8 \
@@ -220,8 +292,8 @@ qmini_arm::JointState joint =
 
 - M8010 的反馈位置是转子侧累计位置，启动值不是 URDF 关节零位；
 - 电机转子侧单圈绝对编码不能替代机械臂回零或输出侧绝对编码器；
-- Python 运动层只处理自碰撞；尚未处理地面、工装、线缆、负载、重力补偿、外部障碍
-  和硬实时调度；
+- Python 规划层只处理自碰撞和关节限位；可视化已有初步重力/刚体动力学，但尚未处理
+  地面接触、工装、线缆、末端负载、减速器效率和硬实时调度；
 - 可达空间点云是对连续工作空间的有限采样，不是解析边界或安全证明；
 - `config/m8010_arm.yaml` 默认未标定，绝对转子位置不会生成；完成六轴方向、机械零位
   和关节限位标定前，规划结果不得发送到真机；

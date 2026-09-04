@@ -1,8 +1,8 @@
 """URDF-backed serial-chain model with ``base_link`` fixed at identity.
 
-This follows the proven FK/Jacobian layout in ``/home/wyt06/Qmini-arm/arm_ik``
-but supports this repository's box and cylinder collision geometry and uses the
-URDF soft limits as planning limits.
+It provides FK and an analytic Jacobian together with the box/cylinder
+collision geometry and URDF soft limits needed by this repository, without
+depending on external source trees.
 """
 
 from __future__ import annotations
@@ -41,9 +41,17 @@ class CollisionGeometry:
 
 
 @dataclass(frozen=True)
+class Inertial:
+    mass_kg: float
+    origin: FloatArray
+    inertia_kg_m2: FloatArray
+
+
+@dataclass(frozen=True)
 class Link:
     name: str
     collisions: tuple[CollisionGeometry, ...]
+    inertial: Inertial | None
 
 
 @dataclass(frozen=True)
@@ -56,7 +64,12 @@ class Joint:
     axis: FloatArray
     lower: float
     upper: float
+    hard_lower: float
+    hard_upper: float
     velocity: float
+    effort: float
+    damping: float
+    friction: float
 
     @property
     def actuated(self) -> bool:
@@ -90,6 +103,20 @@ class ArmModel:
             raise ValueError(f"URDF must contain {base_link!r} and {tip_link!r}")
 
         by_child = {joint.child: joint for joint in all_joints}
+        base_ancestors: list[Joint] = []
+        root_link = base_link
+        while root_link in by_child:
+            ancestor = by_child[root_link]
+            if ancestor.actuated:
+                raise ValueError(f"{base_link!r} must only have fixed ancestors")
+            base_ancestors.append(ancestor)
+            root_link = ancestor.parent
+        root_to_base = np.eye(4, dtype=np.float64)
+        for ancestor in reversed(base_ancestors):
+            root_to_base = root_to_base @ ancestor.origin
+        self.root_link = root_link
+        self.root_to_base = root_to_base
+
         reverse_chain: list[Joint] = []
         current = tip_link
         while current != base_link:
@@ -105,7 +132,12 @@ class ArmModel:
         self.joint_names = tuple(joint.name for joint in self.joints)
         self.lower = np.array([joint.lower for joint in self.joints])
         self.upper = np.array([joint.upper for joint in self.joints])
+        self.hard_lower = np.array([joint.hard_lower for joint in self.joints])
+        self.hard_upper = np.array([joint.hard_upper for joint in self.joints])
         self.velocity = np.array([joint.velocity for joint in self.joints])
+        self.effort = np.array([joint.effort for joint in self.joints])
+        self.damping = np.array([joint.damping for joint in self.joints])
+        self.friction = np.array([joint.friction for joint in self.joints])
         self._actuated_index = {name: index for index, name in enumerate(self.joint_names)}
 
         children: dict[str, list[Joint]] = {}
@@ -220,7 +252,29 @@ class ArmModel:
                 if np.any(size <= 0.0):
                     raise ValueError(f"link {name!r} has invalid collision dimensions")
                 geometries.append(CollisionGeometry(kind, _origin(collision), size))
-            links[name] = Link(name, tuple(geometries))
+            inertial = None
+            if (inertial_node := node.find("inertial")) is not None:
+                mass_node = inertial_node.find("mass")
+                tensor_node = inertial_node.find("inertia")
+                if mass_node is None or tensor_node is None:
+                    raise ValueError(f"link {name!r} has an incomplete inertial block")
+                mass = float(mass_node.get("value", "nan"))
+                ixx = float(tensor_node.get("ixx", "nan"))
+                ixy = float(tensor_node.get("ixy", "nan"))
+                ixz = float(tensor_node.get("ixz", "nan"))
+                iyy = float(tensor_node.get("iyy", "nan"))
+                iyz = float(tensor_node.get("iyz", "nan"))
+                izz = float(tensor_node.get("izz", "nan"))
+                tensor = np.array(
+                    [[ixx, ixy, ixz], [ixy, iyy, iyz], [ixz, iyz, izz]],
+                    dtype=np.float64,
+                )
+                if not np.isfinite(mass) or mass <= 0.0 or not np.all(np.isfinite(tensor)):
+                    raise ValueError(f"link {name!r} has invalid inertial values")
+                if np.min(np.linalg.eigvalsh(tensor)) <= 0.0:
+                    raise ValueError(f"link {name!r} inertia must be positive definite")
+                inertial = Inertial(mass, _origin(inertial_node), tensor)
+            links[name] = Link(name, tuple(geometries), inertial)
 
         joints: list[Joint] = []
         for node in root.findall("joint"):
@@ -228,11 +282,13 @@ class ArmModel:
             parent_node, child_node = node.find("parent"), node.find("child")
             if not name or not kind or parent_node is None or child_node is None:
                 raise ValueError("joint is missing name/type/parent/child")
-            lower, upper, velocity = -np.pi, np.pi, 0.0
+            lower, upper, velocity, effort = -np.pi, np.pi, 0.0, np.inf
             if (limit := node.find("limit")) is not None:
                 lower = float(limit.get("lower", -np.pi))
                 upper = float(limit.get("upper", np.pi))
                 velocity = float(limit.get("velocity", "0"))
+                effort = float(limit.get("effort", "inf"))
+            hard_lower, hard_upper = lower, upper
             if use_soft_limits and (safety := node.find("safety_controller")) is not None:
                 lower = max(lower, float(safety.get("soft_lower_limit", lower)))
                 upper = min(upper, float(safety.get("soft_upper_limit", upper)))
@@ -249,6 +305,11 @@ class ArmModel:
                 raise ValueError(f"joint {name!r} has a zero axis")
             if axis_norm > 0.0:
                 axis /= axis_norm
+            dynamics = node.find("dynamics")
+            damping = 0.0 if dynamics is None else float(dynamics.get("damping", "0"))
+            friction = 0.0 if dynamics is None else float(dynamics.get("friction", "0"))
+            if damping < 0.0 or friction < 0.0:
+                raise ValueError(f"joint {name!r} dynamics must be non-negative")
             joints.append(
                 Joint(
                     name,
@@ -259,7 +320,12 @@ class ArmModel:
                     axis,
                     lower,
                     upper,
+                    hard_lower,
+                    hard_upper,
                     velocity,
+                    effort,
+                    damping,
+                    friction,
                 )
             )
         return links, tuple(joints)

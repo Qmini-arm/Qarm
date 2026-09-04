@@ -60,14 +60,16 @@ unitree_actuator_sdk + RS-485 + M8010
 
 ## Python 机械臂算法模块（已实现）
 
-当前算法层位于 `python/qmini_arm_motion/`，以两个深模块承载主要复杂度：
+当前算法层位于 `python/qmini_arm_motion/`，以三个深模块承载主要复杂度：
 
 - `MotionPlanner.plan(start_q, target_position)`：隐藏 IK 分支连续性、自碰撞检查、
   笛卡尔路点、RRT 兜底和时间参数化；
 - `M8010CommandMapper.frames(trajectory)`：隐藏 ID、方向、减速比、机械零位和
   转子侧参数换算。
+- `MotorDynamicsSimulator.advance(frame, duration)`：复用 `ArmModel` 的惯性、关节和限位，
+  隐藏重力、M8010 PD 折算和数值积分。
 
-可视化和命令行只跨这两个 interface，不复制运动学或电机换算公式。详见
+可视化和命令行只跨这三个 interface，不复制运动学、动力学或电机换算公式。详见
 [运动规划说明](motion_planning.md)。
 
 ## 后续真机控制模块

@@ -1,10 +1,12 @@
 # Joint order is the URDF chain order from base_link to tool0.
 #
-# IMPORTANT: rotor_zero_rad and direction are installation-specific.  The
-# placeholders below deliberately keep calibrated=false, so this project can
-# visualize relative rotor commands but cannot claim an absolute command that
-# is safe to send to an assembled arm.  Fill these values only after homing and
-# direction verification for every physical joint.
+# IMPORTANT: this configuration accompanies qmini_arm.urdf.xacro. Several
+# joint origins/orientations changed relative to the previous model.
+# rotor_zero_rad and direction remain installation-specific;
+# the placeholders below deliberately keep calibrated=false, so this project
+# can visualize relative rotor commands but cannot claim an absolute command
+# that is safe to send to an assembled arm. Re-verify direction and perform
+# homing for every physical joint before filling these values.
 model: GO-M8010-6
 gear_ratio: 6.33
 kp_rotor: 0.2
@@ -12,6 +14,14 @@ kd_rotor: 0.03
 joint_velocity_limit_rad_s: 0.5
 joint_acceleration_limit_rad_s2: 1.0
 control_period_s: 0.02
+simulation:
+  # The xacro root frame is "world". Its fixed world_to_base transform is
+  # applied automatically before dynamics are evaluated in base_link.
+  gravity_root_m_s2: [0.0, 0.0, -9.80665]
+  integration_step_s: 0.001
+  include_coriolis: false
+  mass_regularization_kg_m2: 1.0e-8
+  coulomb_smoothing_rad_s: 0.01
 joints:
   - {name: joint_1, motor_id: 0, direction: 1, calibrated: false, rotor_zero_rad: 0.0, joint_zero_rad: 0.0}
   - {name: joint_2, motor_id: 1, direction: 1, calibrated: false, rotor_zero_rad: 0.0, joint_zero_rad: 0.0}
@@ -19,4 +29,3 @@ joints:
   - {name: joint_4, motor_id: 3, direction: 1, calibrated: false, rotor_zero_rad: 0.0, joint_zero_rad: 0.0}
   - {name: joint_5, motor_id: 4, direction: 1, calibrated: false, rotor_zero_rad: 0.0, joint_zero_rad: 0.0}
   - {name: joint_6, motor_id: 5, direction: 1, calibrated: false, rotor_zero_rad: 0.0, joint_zero_rad: 0.0}
-

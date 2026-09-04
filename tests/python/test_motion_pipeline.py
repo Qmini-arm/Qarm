@@ -14,7 +14,7 @@ def test_collision_free_ik_and_timed_plan(
     mapper: M8010CommandMapper,
 ) -> None:
     start = np.zeros(model.dof)
-    known_goal = np.array([-0.35, 0.25, 0.20, 0.30, 0.15, -0.10])
+    known_goal = np.array([0.20, 0.10, 0.30, 0.10, -0.20, 0.10])
     assert collision.is_free(known_goal)
     target = model.fk(known_goal)[:3, 3]
     solver = PositionIKSolver(model, collision, IKConfig(restarts=12, random_seed=4))

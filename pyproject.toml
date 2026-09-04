@@ -21,6 +21,7 @@ viz = [
 dev = [
   "pytest>=8",
   "ruff>=0.6",
+  "xacro>=2.1,<3",
 ]
 
 [project.scripts]

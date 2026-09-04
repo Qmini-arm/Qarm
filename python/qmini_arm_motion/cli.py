@@ -16,7 +16,7 @@ from .planner import MotionPlanner, PlannerConfig
 from .transforms import rotation_to_rpy
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_URDF = PROJECT_ROOT / "urdf" / "qmini_arm.urdf"
+DEFAULT_URDF = PROJECT_ROOT / "description" / "qmini_arm.urdf"
 DEFAULT_MOTOR_CONFIG = PROJECT_ROOT / "config" / "m8010_arm.yaml"
 
 
@@ -148,13 +148,16 @@ def main(argv: list[str] | None = None) -> int:
             return 0
 
         if args.command == "viz":
+            from .dynamics import ArmDynamics, DynamicsConfig
             from .visualization import launch_visualization
 
+            dynamics = ArmDynamics(model, DynamicsConfig.from_yaml(args.motor_config))
             launch_visualization(
                 model,
                 collision,
                 _planner(model, collision, mapper),
                 mapper,
+                dynamics,
                 initial_q=np.radians(args.start_deg),
                 workspace_samples=args.workspace_samples,
                 host=args.host,

@@ -16,12 +16,12 @@
   <xacro:property name="joint_4_limit" value="2.094395102"/>
   <xacro:property name="joint_5_limit" value="2.094395102"/>
   <xacro:property name="joint_6_limit" value="1.57"/>
-  <xacro:property name="joint_1_soft_limit" value="2.967059728"/>
-  <xacro:property name="joint_2_soft_limit" value="0.261799388"/>
-  <xacro:property name="joint_3_soft_limit" value="2.007128640"/>
-  <xacro:property name="joint_4_soft_limit" value="0.261799388"/>
-  <xacro:property name="joint_5_soft_limit" value="2.007128640"/>
-  <xacro:property name="joint_6_soft_limit" value="2.007128640"/>
+  <xacro:property name="joint_1_soft_limit" value="3.0"/>
+  <xacro:property name="joint_2_soft_limit" value="1.5"/>
+  <xacro:property name="joint_3_soft_limit" value="2.5"/>
+  <xacro:property name="joint_4_soft_limit" value="2.0"/>
+  <xacro:property name="joint_5_soft_limit" value="2.0"/>
+  <xacro:property name="joint_6_soft_limit" value="1.5"/>
   <xacro:property name="effort_limit" value="23.7"/>
   <xacro:property name="velocity_limit" value="3.0"/>
   <xacro:property name="motor_mass" value="0.5"/>

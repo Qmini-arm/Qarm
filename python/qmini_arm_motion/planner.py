@@ -58,6 +58,16 @@ class MotionPlan:
     trajectory: TimedTrajectory
 
 
+@dataclass(frozen=True)
+class JointMotionPlan:
+    """Collision-free, time-parameterized motion to a joint configuration."""
+
+    goal_position_rad: FloatArray
+    path_kind: str
+    waypoints_rad: FloatArray
+    trajectory: TimedTrajectory
+
+
 @dataclass
 class _Tree:
     nodes: list[FloatArray]
@@ -131,8 +141,56 @@ class MotionPlanner:
             self.config.control_period_s,
         )
         if not self.collision.path_is_free(trajectory.positions_rad):
-            raise RuntimeError("internal error: time-parameterized path is not collision-free")
+            raise ValueError(
+                "time-parameterized path failed self-collision validation; "
+                "retry planning with a different seed or start pose"
+            )
         return MotionPlan(target, result, kind, waypoints, trajectory)
+
+    def plan_to_configuration(
+        self,
+        start_q: npt.ArrayLike,
+        goal_q: npt.ArrayLike,
+    ) -> JointMotionPlan:
+        """Plan a collision-free joint motion within the URDF soft limits."""
+        start = self._validated_configuration(start_q, label="start")
+        goal = self._validated_configuration(goal_q, label="goal")
+        waypoints = self._joint_path(start, goal)
+        path_kind = "joint_rrt" if len(waypoints) > 2 else "joint_direct"
+        trajectory = quintic_time_parameterize(
+            waypoints,
+            np.minimum(self.model.velocity, self.config.velocity_limit_rad_s),
+            self.config.acceleration_limit_rad_s2,
+            self.config.control_period_s,
+        )
+        if not self.collision.path_is_free(trajectory.positions_rad):
+            raise ValueError(
+                "time-parameterized path failed self-collision validation; "
+                "retry planning with a different seed or start pose"
+            )
+        return JointMotionPlan(goal, path_kind, waypoints, trajectory)
+
+    def plan_home(self, start_q: npt.ArrayLike) -> JointMotionPlan:
+        """Plan to the URDF zero configuration without performing hardware I/O."""
+        return self.plan_to_configuration(start_q, np.zeros(self.model.dof, dtype=np.float64))
+
+    def _validated_configuration(
+        self,
+        q: npt.ArrayLike,
+        *,
+        label: str,
+    ) -> FloatArray:
+        values = np.asarray(q, dtype=np.float64).reshape(self.model.dof)
+        if not np.all(np.isfinite(values)):
+            raise ValueError(f"{label} configuration must be finite")
+        if not self.model.within_limits(values):
+            raise ValueError(f"{label} configuration violates the URDF soft limits")
+        collisions = self.collision.check(values)
+        if collisions:
+            raise ValueError(
+                f"{label} configuration self-collides: " + ", ".join(map(str, collisions))
+            )
+        return values
 
     def _cartesian_ik_path(
         self, start: FloatArray, target: FloatArray

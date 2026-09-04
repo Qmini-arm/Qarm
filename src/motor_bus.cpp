@@ -2,9 +2,12 @@
 
 #include <chrono>
 #include <cmath>
+#include <fcntl.h>
 #include <stdexcept>
 #include <string>
+#include <sys/file.h>
 #include <thread>
+#include <unistd.h>
 
 #include "serialPort/SerialPort.h"
 #include "unitreeMotor/unitreeMotor.h"
@@ -39,18 +42,47 @@ void validateCommand(const MotorCommand& command) {
   }
 }
 
+class BusLock {
+ public:
+  BusLock() {
+    fd_ = ::open("/tmp/qarm_m8010_bus.lock", O_CREAT | O_RDWR, 0600);
+    if (fd_ < 0 || ::flock(fd_, LOCK_EX | LOCK_NB) != 0) {
+      if (fd_ >= 0) ::close(fd_);
+      fd_ = -1;
+      throw std::runtime_error("another Qarm process owns the motor bus lock");
+    }
+  }
+
+  ~BusLock() {
+    if (fd_ >= 0) {
+      ::flock(fd_, LOCK_UN);
+      ::close(fd_);
+    }
+  }
+
+  BusLock(const BusLock&) = delete;
+  BusLock& operator=(const BusLock&) = delete;
+
+ private:
+  int fd_ = -1;
+};
+
 }  // namespace
 
 class MotorBus::Impl {
  public:
   explicit Impl(const std::string& serial_port)
-      : kind(MotorType::GO_M8010_6),
+      : bus_lock(),
+        kind(MotorType::GO_M8010_6),
         foc_mode(queryMotorMode(kind, MotorMode::FOC)),
+        brake_mode(queryMotorMode(kind, MotorMode::BRAKE)),
         gear_ratio(queryGearRatio(kind)),
         serial(serial_port) {}
 
+  BusLock bus_lock;
   MotorType kind;
   int foc_mode;
+  int brake_mode;
   double gear_ratio;
   SerialPort serial;
 };
@@ -68,7 +100,15 @@ double MotorBus::gearRatio() const { return impl_->gear_ratio; }
 
 int MotorBus::focMode() const { return impl_->foc_mode; }
 
+int MotorBus::brakeMode() const { return impl_->brake_mode; }
+
 MotorState MotorBus::exchange(int motor_id, const MotorCommand& command) {
+  return exchangeWithMode(motor_id, command, impl_->foc_mode);
+}
+
+MotorState MotorBus::exchangeWithMode(int motor_id,
+                                      const MotorCommand& command,
+                                      int mode) {
   validateMotorId(motor_id);
   validateCommand(command);
 
@@ -80,7 +120,7 @@ MotorState MotorBus::exchange(int motor_id, const MotorCommand& command) {
   sdk_state.motorType = impl_->kind;
   sdk_state.correct = false;
   sdk_command.id = static_cast<unsigned short>(motor_id);
-  sdk_command.mode = static_cast<unsigned short>(impl_->foc_mode);
+  sdk_command.mode = static_cast<unsigned short>(mode);
   sdk_command.tau = static_cast<float>(command.torque_ff_nm);
   sdk_command.dq = static_cast<float>(command.velocity_rad_s);
   sdk_command.q = static_cast<float>(command.position_rad);
@@ -115,6 +155,10 @@ MotorState MotorBus::readStateZeroOutput(int motor_id) {
   return exchange(motor_id, MotorCommand{});
 }
 
+MotorState MotorBus::readStateBrake(int motor_id) {
+  return exchangeWithMode(motor_id, MotorCommand{}, impl_->brake_mode);
+}
+
 int MotorBus::sendZeroOutput(const std::vector<int>& motor_ids,
                              int repeat_count) noexcept {
   int acknowledgements = 0;
@@ -125,6 +169,28 @@ int MotorBus::sendZeroOutput(const std::vector<int>& motor_ids,
       try {
         (void)readStateZeroOutput(motor_id);
         ++acknowledgements;
+      } catch (const std::exception&) {
+      }
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+  }
+  return acknowledgements;
+}
+
+int MotorBus::sendBrake(const std::vector<int>& motor_ids,
+                        int repeat_count) noexcept {
+  int acknowledgements = 0;
+  if (repeat_count <= 0) return acknowledgements;
+
+  for (int round = 0; round < repeat_count; ++round) {
+    for (const int motor_id : motor_ids) {
+      try {
+        const MotorState state = readStateBrake(motor_id);
+        if (state.mode == impl_->brake_mode && state.error_code == 0 &&
+            std::isfinite(state.position_rad) &&
+            std::isfinite(state.velocity_rad_s)) {
+          ++acknowledgements;
+        }
       } catch (const std::exception&) {
       }
     }

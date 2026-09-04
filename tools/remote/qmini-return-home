@@ -1,0 +1,5 @@
+#!/bin/sh
+set -eu
+
+exec "$HOME/.local/libexec/qarm/qmini_return_to_zero" \
+  --config "$HOME/.config/qarm/gravity_comp.conf" "$@"

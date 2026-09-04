@@ -11,7 +11,7 @@ from .commands import CommandFrame, M8010CommandMapper, MotorSetpoint
 from .dynamics import ArmDynamics, DynamicsConfig, DynamicsSample, MotorDynamicsSimulator
 from .ik import IKConfig, IKResult, IKStatus, PositionIKSolver
 from .model import ArmModel
-from .planner import MotionPlan, MotionPlanner, PlannerConfig, TimedTrajectory
+from .planner import JointMotionPlan, MotionPlan, MotionPlanner, PlannerConfig, TimedTrajectory
 from .workspace import SampledWorkspace, sample_workspace
 
 __all__ = [
@@ -24,6 +24,7 @@ __all__ = [
     "IKConfig",
     "IKResult",
     "IKStatus",
+    "JointMotionPlan",
     "M8010CommandMapper",
     "MotorSetpoint",
     "MotorDynamicsSimulator",

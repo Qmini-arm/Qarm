@@ -1,9 +1,21 @@
-# Locate the adjacent, vendor-supplied Unitree actuator SDK without editing it.
+# Locate a vendor-supplied Unitree actuator SDK without editing it. A local
+# working copy is convenient for this checkout; a sibling directory remains
+# the documented default for fresh clones.
 get_filename_component(
-  _QMINI_DEFAULT_SDK_ROOT
+  _QMINI_REPO_SDK_ROOT
+  "${CMAKE_CURRENT_LIST_DIR}/../unitree_actuator_sdk"
+  ABSOLUTE
+)
+get_filename_component(
+  _QMINI_ADJACENT_SDK_ROOT
   "${CMAKE_CURRENT_LIST_DIR}/../../unitree_actuator_sdk"
   ABSOLUTE
 )
+if(EXISTS "${_QMINI_REPO_SDK_ROOT}/include/unitreeMotor/unitreeMotor.h")
+  set(_QMINI_DEFAULT_SDK_ROOT "${_QMINI_REPO_SDK_ROOT}")
+else()
+  set(_QMINI_DEFAULT_SDK_ROOT "${_QMINI_ADJACENT_SDK_ROOT}")
+endif()
 set(
   UNITREE_ACTUATOR_SDK_ROOT
   "${_QMINI_DEFAULT_SDK_ROOT}"
@@ -48,4 +60,3 @@ if(NOT TARGET Unitree::ActuatorSDK)
     INTERFACE_INCLUDE_DIRECTORIES "${UNITREE_ACTUATOR_SDK_INCLUDE_DIR}"
   )
 endif()
-

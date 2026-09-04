@@ -1,0 +1,39 @@
+{
+  "name": "table_supported_stl_v1",
+  "description": "Manual calibration pose derived from the current CAD STL meshes",
+  "reference_joint_rad": [
+    0.0,
+    1.7480178110996762,
+    0.1548064706928587,
+    -0.02005233595350972,
+    0.0,
+    -1.57
+  ],
+  "reference_joint_deg": [
+    0.0,
+    100.15404308970784,
+    8.869757412016472,
+    -1.1489142195145463,
+    0.0,
+    -89.95437383553924
+  ],
+  "motor_ids_by_joint": [0, 1, 2, 3, 4, 5],
+  "manual_calibration_only": true,
+  "outside_normal_urdf_limits": true,
+  "approach": {
+    "joint_6_motor_id_5": "clockwise_to_mechanical_limit",
+    "clockwise_viewpoint": "operator side shown in the accepted setup photo",
+    "urdf_endpoint": "joint_6 lower limit (-1.57 rad)"
+  },
+  "stl_constraints": [
+    "The minimum world-Z vertex of link_2 arm_link.stl is tangent to the table plane defined by the minimum world-Z vertex of base_pair.stl.",
+    "The minimum world-Z vertex of the motor.stl carried by link_3 is tangent to the same table plane.",
+    "The motor carried by link_4 uses the upward-facing horizontal branch; its cylinder axis is vertical at joint_4=-0.0200523360 rad.",
+    "joint_6 is at the URDF lower hard limit (-1.57 rad), reached clockwise from the operator viewpoint."
+  ],
+  "notes": [
+    "The positive mirrored solution matches the accepted setup: joint_2 moves counterclockwise about 100 degrees and keeps joint_4 inside its normal hard limit.",
+    "Do not command the robot to this pose; place it manually while all motors are in BRAKE mode and the arm is supported.",
+    "The clockwise endpoint is assigned to negative joint_6 by the agreed right-hand-rule convention; verify this once in the live mirror before enabling motion."
+  ]
+}

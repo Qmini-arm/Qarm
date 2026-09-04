@@ -43,8 +43,9 @@ struct Config {
 void printUsage(const char* program) {
   std::cout
       << "Usage: " << program << " [options]\n\n"
-      << "Read one GO-M8010-6 state by sending a zero-output FOC request.\n"
-      << "This releases active holding; it is not a passive bus monitor.\n\n"
+      << "Read one GO-M8010-6 state by sending a BRAKE/zero request.\n"
+      << "This changes motor state; it is not a passive bus monitor or a "
+         "safety-rated mechanical brake.\n\n"
       << "Options (defaults shown):\n"
       << "  --port PATH                 /dev/ttyUSB0\n"
       << "  --id N                      0 (valid: 0..14)\n"
@@ -169,12 +170,12 @@ void run(const Config& config) {
       const auto cycle_started = Clock::now();
       const auto exchange_started = Clock::now();
       const qmini_arm::MotorState motor_state =
-          bus->readStateZeroOutput(config.motor_id);
+          bus->readStateBrake(config.motor_id);
       const double exchange_ms =
           std::chrono::duration<double, std::milli>(Clock::now() -
                                                     exchange_started)
               .count();
-      qmini_arm::validateBasicState(motor_state, bus->focMode(),
+      qmini_arm::validateBasicState(motor_state, bus->brakeMode(),
                                     config.temperature_limit_c);
 
       if (config.relative_to_start && sample_index == 0) {
@@ -206,16 +207,16 @@ void run(const Config& config) {
     }
   } catch (...) {
     if (bus) {
-      const int acknowledged = bus->sendZeroOutput(ids);
-      std::cerr << "EXIT zero-output acknowledgements: " << acknowledged
+      const int acknowledged = bus->sendBrake(ids);
+      std::cerr << "EXIT BRAKE acknowledgements: " << acknowledged
                 << "/3\n";
     }
     throw;
   }
 
   if (bus) {
-    const int acknowledged = bus->sendZeroOutput(ids);
-    std::cerr << "EXIT zero-output acknowledgements: " << acknowledged
+    const int acknowledged = bus->sendBrake(ids);
+    std::cerr << "EXIT BRAKE acknowledgements: " << acknowledged
               << "/3\n";
     if (acknowledged != 3) {
       std::cerr << "WARNING: final zero-output was not fully confirmed; cut "
@@ -232,8 +233,8 @@ int main(int argc, char** argv) {
     validateConfig(config);
 
     std::cerr
-        << "WARNING: reading M8010 state sends a FOC zero-output request and "
-           "releases active holding.\n"
+        << "WARNING: reading M8010 state sends a BRAKE/zero request and "
+           "changes motor state. It is not a mechanical brake.\n"
         << "Secure the mechanism and provide a physical power cutoff.\n";
     if (!config.assume_yes) {
       std::cerr << "Type READ to open " << config.port << " and query motor ID "
@@ -255,4 +256,3 @@ int main(int argc, char** argv) {
     return 1;
   }
 }
-

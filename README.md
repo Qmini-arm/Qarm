@@ -4,12 +4,15 @@
 GO-M8010-6 通信、转子/关节坐标换算和台架测试；Python 层完成了基于 URDF 的 FK、
 无自碰撞工作空间采样、位置 IK、轨迹规划、M8010 命令生成和带重力的初步关节动力学
 可视化。
-工程引用相邻的 `unitree_actuator_sdk`，不会修改 SDK 仓库。
+工程只读引用 `unitree_actuator_sdk`，不会修改 SDK 仓库；CMake 会优先使用仓库内的
+本地 SDK 工作副本，否则回退到与 `Qarm/` 相邻的 SDK 目录。
 
 当前可执行程序：
 
 - `qmini_motor_state`：读取指定串口、指定 ID 的电机状态；
 - `qmini_sine_position`：让 ID 0–5 执行相同的相对正弦位置测试。
+- `qmini_gravity_comp`：带保护的 100% 静态重力前馈实验；
+- `qmini_return_to_zero`：执行 MuJoCo 验证过的 CSV 回到 URDF 零位轨迹；
 - `qmini-motion`：离线 FK/IK、可达空间、轨迹与可视化入口（不打开串口）。
 
 ## 目录结构
@@ -24,11 +27,14 @@ Qarm/
 │   ├── motor_bus.hpp             # SDK 无关的公开通信接口
 │   ├── joint_conversion.hpp      # 转子侧与机械关节侧换算
 │   ├── safety.hpp                # 通用反馈和运动保护
-│   └── sine_trajectory.hpp       # SI 单位的轨迹模块
+│   ├── sine_trajectory.hpp       # SI 单位的轨迹模块
+│   └── joint_trajectory.hpp      # 回零 CSV 解析和安全约束
 ├── src/                          # 公共库实现，SDK 细节只在这里出现
 ├── apps/
 │   ├── read_motor_state.cpp      # 状态读取工具
 │   ├── sine_position_test.cpp    # 六电机正弦位置测试
+│   ├── gravity_compensation.cpp  # 重力补偿控制器
+│   ├── return_to_zero.cpp         # CSV 驱动的回零控制器
 │   └── cli_utils.hpp             # 两个工具共用的参数解析
 ├── tests/                        # C++ 和 Python 离线测试
 ├── docs/                         # 架构与运动规划说明
@@ -36,6 +42,7 @@ Qarm/
 ├── config/m8010_arm.yaml         # 六关节 ID、方向、零位和控制参数
 ├── description/                  # xacro/URDF 机械臂模型与可视网格
 ├── python/qmini_arm_motion/      # FK/IK/碰撞/规划/命令/动力学/可视化
+├── python/qarm_sim/              # MuJoCo、遥测镜像和离线回零实验
 └── pyproject.toml
 ```
 
@@ -43,12 +50,12 @@ Qarm/
 
 ## 平台支持
 
-| 功能 | Linux x86_64/aarch64 | macOS |
-|---|---:|---:|
-| Python FK/IK、规划、测试 | 支持 | 支持 |
-| Viser 可视化和初步动力学 | 支持 | 支持 |
-| C++ 电机层编译 | 支持 | 不支持现有 SDK |
-| M8010 串口实机工具 | 支持 | 不支持现有 SDK |
+| 功能                     | Linux x86_64/aarch64 |          macOS |
+| ------------------------ | -------------------: | -------------: |
+| Python FK/IK、规划、测试 |                 支持 |           支持 |
+| Viser 可视化和初步动力学 |                 支持 |           支持 |
+| C++ 电机层编译           |                 支持 | 不支持现有 SDK |
+| M8010 串口实机工具       |                 支持 | 不支持现有 SDK |
 
 macOS 的限制来自 Unitree 官方仓库当前只提供 Linux x86_64 和 aarch64 的预编译 `.so`；
 与 Python 离线运动层无关。真机控制建议使用 Ubuntu 22.04/24.04 或等价 Linux 环境。
@@ -101,8 +108,8 @@ python3 -m venv .venv
 
 ### Linux：C++ 电机层和真机工具
 
-完成上述 Linux Python 安装后，额外安装编译工具，并把 Unitree SDK 与本仓库放在同一
-父目录：
+完成上述 Linux Python 安装后，额外安装编译工具，并把 Unitree SDK 放在仓库内的本地
+工作副本或与本仓库同一父目录：
 
 ```bash
 sudo apt install -y build-essential cmake
@@ -115,7 +122,8 @@ cmake --build build -j2
 ctest --test-dir build --output-on-failure
 ```
 
-默认 SDK 路径是与 `Qarm/` 相邻的 `unitree_actuator_sdk/`。若 SDK 位于其他位置：
+默认先使用仓库内的 `unitree_actuator_sdk/` 工作副本；没有该目录时回退到与 `Qarm/`
+相邻的 `unitree_actuator_sdk/`。若 SDK 位于其他位置：
 
 ```bash
 cmake -S . -B build \
@@ -188,7 +196,7 @@ Python 运动层采用“URDF 模型—阻尼最小二乘 IK—工作空间采�
   --id 0
 ```
 
-程序要求输入 `READ` 才会打开串口。M8010 是请求—应答设备，所谓“读取”并不是被动监听：程序发送 `tau=dq=q=kp=kd=0` 的 FOC 请求再取得反馈。这会释放主动保持，不是急停；电机不得支撑会因失力而坠落的机械臂。
+程序要求输入 `READ` 才会打开串口。M8010 是请求—应答设备，所谓“读取”并不是被动监听：程序发送 `BRAKE(mode 0)` 且 `tau=dq=q=kp=kd=0` 后取得反馈。这会改变电机状态，也不是安全机械抱闸；机械臂必须有可靠支撑。
 
 持续读取，并把启动时位置临时定义为关节 0°：
 
@@ -272,7 +280,7 @@ joint_tau_ideal_nm,temp_c,merror,mode,exchange_ms
 #include "qmini_arm/motor_bus.hpp"
 
 qmini_arm::MotorBus bus("/dev/ttyUSB0");
-qmini_arm::MotorState motor = bus.readStateZeroOutput(0);
+qmini_arm::MotorState motor = bus.readStateBrake(0);
 
 qmini_arm::JointCalibration calibration;
 calibration.motor_id = 0;
@@ -299,3 +307,206 @@ qmini_arm::JointState joint =
   和关节限位标定前，规划结果不得发送到真机；
 - 当前正弦程序是台架验证工具，不是机械臂控制器；
 - 进程、USB 或供电异常时无法保证最后的零输出命令送达，必须提供物理断电和机械限位。
+
+## MuJoCo 与六轴只读镜像
+
+`qarm-sim` 保持 `description/qmini_arm.urdf.xacro` 为模型源，运行时展开并
+生成 MuJoCo 场景，保留 visual STL 和原生 cylinder/box collision，同时增加
+六个关节力矩执行器、`tool0` site、状态传感器和固定基座场景。执行器的峰值
+边界来自宇树官方 GO-M8010-6 参数；转子惯量、连续力矩、摩擦、齿隙和通信延迟
+仍明确保留为待辨识参数。
+
+安装并验证：
+
+```bash
+UV_CACHE_DIR=/private/tmp/qarm_uv_cache uv sync --extra dev
+UV_CACHE_DIR=/private/tmp/qarm_uv_cache uv run qarm-sim validate
+UV_CACHE_DIR=/private/tmp/qarm_uv_cache uv run qarm-sim render
+UV_CACHE_DIR=/private/tmp/qarm_uv_cache uv run pytest -q
+```
+
+开发板读取器安装在：
+
+```text
+/home/HwHiAiUser/.local/libexec/qarm/m8010_readonly
+```
+
+它只允许顺序发送 `BRAKE+全零` 请求，不实现 FOC 运动命令。运行仍要求机械支撑：
+
+```bash
+UV_CACHE_DIR=/private/tmp/qarm_uv_cache uv run qarm-sim inspect-stream \
+  --ssh-target HwHiAiUser@192.168.10.102 \
+  --samples 5 \
+  --acknowledge-supported-arm
+```
+
+### 在桌面支撑姿态标零
+
+完整 URDF 零位很难靠人稳定保持，因此采用照片确认过的桌面支撑姿态。该姿态
+不是运行姿态；`joint_2` 在手动标零时超过软运行限位，但仍位于专门保留的
+`±1.75 rad` 硬限位内。程序直接使用
+当前 `base_pair.stl`、`arm_link.stl` 和 `motor.stl` 顶点重新解算；当前结果为：
+
+```text
+motor ID / joint:       0       1          2         3     4       5
+reference angle deg:   0.0   +100.1540   +8.8698   -1.1489   0.0  -89.9544
+```
+
+- 第一根长臂 STL 与底板 STL 定义的桌面相切；
+- 远端 `motor.stl` 与同一桌面相切；
+- `joint_2/motor ID 1` 从照片操作侧逆时针约 `100.1540°`；该正支使
+  motor 4 朝上的水平解只需 `joint_4/motor ID 3≈-1.1489°`，不会使
+  joint_4 越过正常硬限位；
+- motor 5 从照片中的操作侧看，顺时针转到机械限位，对应 `joint_6` 的
+  URDF 下限 `-1.57 rad`。
+
+可随时复算并检查 STL 误差：
+
+```bash
+UV_CACHE_DIR=/private/tmp/qarm_uv_cache uv run qarm-sim solve-calibration-pose
+UV_CACHE_DIR=/private/tmp/qarm_uv_cache uv run qarm-sim viewer --calibration-pose
+```
+
+1. 可靠支撑机械臂，手动摆到上述姿态；不要用电机命令把它驱动到这个超软限位姿态。
+2. 清空工作区，确保没有第二个进程占用 `/dev/ttyUSB0`。
+3. 执行：
+
+```bash
+UV_CACHE_DIR=/private/tmp/qarm_uv_cache uv run qarm-sim capture-zero \
+  --ssh-target HwHiAiUser@192.168.10.102 \
+  --samples 200 \
+  --confirm-table-supported-pose \
+  --acknowledge-supported-arm
+```
+
+程序连续采集约 2 秒；任何电机无响应、报错，或任一关节位置跨度超过
+`0.01 rad` 都会拒绝写入。成功时会先备份 `config/joint_map.json`，再原子写入
+参考关节角、六轴零偏、转子零位、采样稳定性、UTC 时间和开发板 boot ID。
+标零绑定当前上电
+周期，开发板或电机重新上电后必须重新采集。
+
+方向尚未确认时，程序以参考姿态形式保存原始编码器值，并按
+`q=q_ref+direction·(encoder-encoder_ref)` 映射；之后修正 `direction` 不需要
+重新摆标定姿态。派生的 `zero_offset_rad` 仅用于兼容和诊断。
+
+本次标零后已逐轴转动并确认实机与 MuJoCo 方向一致，`joint_map.json` 已记录
+`direction_calibrated=true`。它仍不会自动把 `m8010_arm.yaml` 中的运动规划命令
+标记为可下发，避免重力补偿部署意外扩大成轨迹控制授权。
+
+标零后启动实时 MuJoCo 镜像：
+
+```bash
+UV_CACHE_DIR=/private/tmp/qarm_uv_cache uv run qarm-sim mirror \
+  --ssh-target HwHiAiUser@192.168.10.102 \
+  --acknowledge-supported-arm
+```
+
+macOS 会自动使用 `mjpython` 打开窗口。默认不无限写日志；需要实验记录时显式
+添加 `--record runs/name.ndjson`。镜像使用 `mj_forward` 显示实测姿态，不进行
+动力学积分，因此它首先验证 ID、方向、零位和几何 FK，而不是直接证明动态
+sim-to-real 精度。
+
+## 开发板重力补偿
+
+开发板已安装用户态命令：
+
+```text
+~/.local/bin/qmini-gravity
+```
+
+运行配置位于 `~/.config/qarm/gravity_comp.conf`，并绑定本次标零的开发板
+boot ID、六轴转子参考位置、ID 顺序和方向。程序直接使用与 MuJoCo
+`qfrc_bias(q, qvel=0)` 同符号的静态保持力矩，并按功率守恒换算到转子侧：
+
+```text
+tau_rotor = scale * direction * tau_joint_gravity / 6.33
+```
+
+照片中的末端机械手按用户确认作为可忽略轻负载，当前模型不计其质量；以后更换
+较重工具或拿取物体前必须补入工具质量和质心。
+
+部署默认不自启，并提供三个互斥模式：
+
+```bash
+# 不开串口
+qmini-gravity --dry-run
+
+# 只发 BRAKE，计算但绝不发送重力力矩
+qmini-gravity --shadow \
+  --acknowledge-supported-arm \
+  --confirm-same-motor-power-cycle
+
+# 100% 模型补偿；仍受逐轴力矩帽、速度保护和渐入/渐出约束
+qmini-gravity --enable-foc \
+  --scale 1.0 \
+  --duration-s 12 \
+  --ramp-s 3 \
+  --acknowledge-supported-arm \
+  --acknowledge-estop-ready \
+  --confirm-same-motor-power-cycle
+```
+
+FOC 模式启动前要求五轮完整反馈、当前 boot ID、所有关节在软限位内且离边界至少
+`0.05 rad`。当前最大模型 scale 为 100%，逐轴转子力矩限幅为
+`[0.03, 2.00, 0.90, 0.08, 0.03, 0.03] N·m`；离线扫描的软限位内最大模型请求约为
+`[0.0016, 1.9967, 0.8773, 0.0716, 0.0014, 0.0005] N·m`，因此不会把正常的 100%
+模型请求截成较低比例，日志中的 `saturated=1` 仍会显示 slew 或异常限幅。逐轴关节
+速度软保护为 `[0.50, 0.50, 0.50, 0.70, 1.00, 1.50] rad/s`，连续两帧才退出；
+硬保护为 `[1.00, 1.00, 1.00, 1.40, 2.00, 2.00] rad/s`，单帧立即退出。超速故障
+会打印实测值、阈值和保护类型。控制器还包含 100 Hz 循环、阻尼、力矩 slew、
+温度/错误码/反馈/50 ms 调度看门狗。正常 12 秒实验为 3 秒渐入、6 秒观察、
+3 秒渐出，再确认零力矩 FOC 并切回 BRAKE；故障路径立即尝试 BRAKE。SSH 断开
+产生的 `SIGHUP` 也会走停止流程，并忽略日志管道断开产生的 `SIGPIPE`。
+
+通过 SSH 做首次实验时，建议先创建 `~/.local/state/qarm`，并把控制器 stdout/stderr
+直接重定向到开发板本地文件，而不是接到 `tee` 等管道；这样远端输出背压不会阻塞
+控制线程。实验结束后再读取该日志。
+
+开发板或任一电机掉电后必须重新标零并更新部署配置。boot ID 只能发现开发板重启，
+不能自动发现单台电机掉电，因此 `--confirm-same-motor-power-cycle` 是人工安全门。
+`SIGKILL`、USB 断开或整板故障时软件无法保证最后一帧 BRAKE 到达，实验期间必须
+始终保留机械支撑和物理断电手段。
+
+## 回到 URDF 零位
+
+回零分成离线规划/验证和实机执行两步。先在本机用同一份 URDF、碰撞检查器和 MuJoCo
+生成轨迹；`plan-home` 的 `--start-deg` 必须填写当前六个关节角，不能把标定姿态
+（`joint_2=100.154°`）直接当作运行起点，因为它位于运行软限位之外：
+
+```bash
+UV_CACHE_DIR=/private/tmp/qarm_uv_cache uv run qarm-sim plan-home \
+  --start-deg 10 5 10 5 -5 5 \
+  --output build/home_zero.csv
+```
+
+该命令只做离线计算，不访问 SSH/串口。规划器先检查起点、零位和完整路径的 URDF
+自碰撞，必要时使用 RRT-Connect 绕开碰撞；随后用五次曲线限制到 `0.25 rad/s`、
+`0.50 rad/s²` 和 `10 ms` 控制周期。命令会再用 MuJoCo 闭环实验复现 M8010 的
+位置/速度控制、100% 重力前馈、Q8 力矩量化、已部署力矩帽和假设的
+`0.001 kg·m²` 反射关节惯量；只有无接触、无硬限位越界、无力矩饱和、速度和跟踪
+误差均通过时才写出 CSV。这个惯量仍未由实机辨识，MuJoCo 结果不能替代现场慢速验证。
+
+开发板上的受保护执行器为 `~/.local/bin/qmini-return-home`。它只接受上述 13 列关节
+轨迹 CSV，不接受任意电机目标；启动前会重新读取六轴 BRAKE 反馈，确认当前关节角
+与轨迹首帧相差不超过 `0.03 rad`，检查标定 boot ID、ID 0--5、速度/温度/反馈和
+软限位，然后按轨迹发送带绝对转子位置、速度、位置增益、阻尼和 100% 重力前馈的
+FOC 帧。故障或中断先尝试六轴 BRAKE，正常结束也先 BRAKE 再打印日志。
+
+实机操作示例（人在机械臂旁、机械支撑和物理断电就绪后）：
+
+```bash
+# 开发板本地执行；日志写本地文件，避免 SSH 输出背压阻塞控制线程
+mkdir -p ~/.local/state/qarm
+~/.local/bin/qmini-return-home \
+  --trajectory /path/to/home_zero.csv \
+  --enable-foc \
+  --acknowledge-supported-arm \
+  --acknowledge-estop-ready \
+  --confirm-same-motor-power-cycle \
+  --confirm-collision-checked-plan \
+  >~/.local/state/qarm/return-home-$(date +%Y%m%dT%H%M%S).log 2>&1
+```
+
+`--dry-run` 可在没有串口时验证 CSV 和配置；它不会读取开发板。实机回零不是“校准
+姿态”动作，不能从超软限位姿态启动；如果现场反馈角度不匹配、刚重启过开发板/电机、
+CSV 不是当前 URDF 生成的文件，程序会拒绝发出第一帧 FOC。

@@ -243,6 +243,8 @@ cancel()
 
 - IK/FK 不依赖 Unitree SDK。
 - `MotionPlanner` 接收关节起点和笛卡尔目标，返回完整轨迹。
+- `MotionPlanner.plan_home(start_q)` 返回到 URDF 零位的碰撞检查轨迹；
+  `qarm-sim plan-home` 会将它交给 MuJoCo 做离线闭环验证并导出关节 CSV。
 - 硬件 adapter 接收完整轨迹并返回带时间戳的六轴反馈。
 - 可视化只消费规划结果和执行反馈，不拥有串口。
 - 复用优先：新增代码前先搜索并复用现有模块、interface、换算函数和测试夹具，保持单一
@@ -269,6 +271,17 @@ cancel()
 - 当前规划目标是位置点；“位置可达”不表示该点的任意末端姿态都可达。
 - 当前工作空间需要在实机限位变化后重新采样。
 
+### 当前回零链路
+
+- `qarm-sim plan-home --start-deg ... --output build/home_zero.csv` 只在本机运行
+  FK/碰撞规划和 MuJoCo 闭环实验，不打开串口；仿真使用未辨识的保守反射惯量假设，
+  不能替代现场验证。
+- 开发板 `qmini_return_to_zero` 只接受该 13 列关节 CSV，并在第一帧前重新核对
+  六轴 BRAKE 反馈、当前标定 boot ID、起点角度、速度/温度/错误码和安全确认；故障
+  先发六轴 BRAKE。`qmini_return_to_zero --dry-run` 可在无硬件时验证配置和 CSV。
+- `config/gravity_comp.conf` 当前为 schema 2：100% 模型重力前馈、逐轴力矩帽、软/硬
+  速度跳闸和 Q8 对齐的 slew；开发板离线时不得尝试 SSH、shadow 或 FOC。
+
 ## 回归命令
 
 ```bash
@@ -288,6 +301,10 @@ ctest --test-dir build --output-on-failure
   --start-deg 0 0 0 0 0 0 \
   --target 0.668 0.105 -0.163 \
   --output build/m8010_commands.csv
+
+.venv/bin/qarm-sim plan-home \
+  --start-deg 10 5 10 5 -5 5 \
+  --output build/home_zero.csv
 ```
 
 可视化启动测试：

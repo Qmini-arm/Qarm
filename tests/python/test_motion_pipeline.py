@@ -36,6 +36,8 @@ def test_collision_free_ik_and_timed_plan(
     assert collision.path_is_free(plan.trajectory.positions_rad)
     assert np.all(model.within_limits(plan.trajectory.positions_rad))
     assert np.max(np.abs(plan.trajectory.velocities_rad_s)) <= 0.5 + 1e-8
+    sampled_acceleration = np.diff(plan.trajectory.velocities_rad_s, axis=0) / 0.02
+    assert np.max(np.abs(sampled_acceleration)) <= 1.0 + 1e-3
     reached = model.fk(plan.trajectory.positions_rad[-1])[:3, 3]
     assert np.linalg.norm(reached - target) <= 0.001
 
@@ -77,3 +79,67 @@ def test_command_csv_has_six_rows_per_control_tick(
     assert all(row["rotor_position_rad"] == "" for row in rows)
     sampled_acceleration = np.diff(trajectory.velocities_rad_s, axis=0) / 0.02
     assert np.max(np.abs(sampled_acceleration)) <= 1.0 + 1e-3
+
+
+def test_plan_home_reaches_urdf_zero_with_smooth_collision_free_trajectory(
+    model: ArmModel,
+    collision: CollisionChecker,
+    mapper: M8010CommandMapper,
+) -> None:
+    start = np.radians([10.0, 5.0, 10.0, 5.0, -5.0, 5.0])
+    planner = MotionPlanner(
+        model,
+        collision,
+        config=PlannerConfig(
+            velocity_limit_rad_s=mapper.joint_velocity_limit_rad_s,
+            acceleration_limit_rad_s2=mapper.joint_acceleration_limit_rad_s2,
+            control_period_s=mapper.control_period_s,
+        ),
+    )
+
+    plan = planner.plan_home(start)
+
+    assert plan.path_kind == "joint_direct"
+    assert np.allclose(plan.goal_position_rad, 0.0)
+    assert np.allclose(plan.trajectory.positions_rad[0], start)
+    assert np.allclose(plan.trajectory.positions_rad[-1], 0.0)
+    assert np.allclose(plan.trajectory.velocities_rad_s[[0, -1]], 0.0)
+    assert collision.path_is_free(plan.trajectory.positions_rad)
+    assert np.all(model.within_limits(plan.trajectory.positions_rad))
+    assert np.max(np.abs(plan.trajectory.velocities_rad_s)) <= 0.5 + 1e-8
+    sampled_acceleration = np.diff(plan.trajectory.velocities_rad_s, axis=0) / 0.02
+    assert np.max(np.abs(sampled_acceleration)) <= 1.0 + 1e-3
+
+
+def test_plan_to_configuration_rejects_goal_outside_soft_limits(
+    model: ArmModel,
+    collision: CollisionChecker,
+) -> None:
+    planner = MotionPlanner(model, collision)
+    goal = np.zeros(model.dof)
+    goal[0] = model.upper[0] + 0.01
+
+    with np.testing.assert_raises_regex(ValueError, "goal configuration violates"):
+        planner.plan_to_configuration(np.zeros(model.dof), goal)
+
+
+def test_plan_home_rejects_a_self_colliding_start(
+    model: ArmModel,
+    collision: CollisionChecker,
+) -> None:
+    planner = MotionPlanner(model, collision)
+    colliding = np.array([1.92408836, -0.14987336, 0.96931087, 0.06803653, 1.71572270, -0.84180829])
+
+    with np.testing.assert_raises_regex(ValueError, "start configuration self-collides"):
+        planner.plan_home(colliding)
+
+
+def test_plan_home_at_zero_still_returns_a_stopped_trajectory(
+    model: ArmModel,
+    collision: CollisionChecker,
+) -> None:
+    plan = MotionPlanner(model, collision).plan_home(np.zeros(model.dof))
+
+    assert len(plan.trajectory.times_s) == 2
+    assert np.allclose(plan.trajectory.positions_rad, 0.0)
+    assert np.allclose(plan.trajectory.velocities_rad_s, 0.0)

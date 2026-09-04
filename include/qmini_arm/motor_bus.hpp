@@ -22,6 +22,7 @@ class MotorBus {
 
   double gearRatio() const;
   int focMode() const;
+  int brakeMode() const;
 
   // Sends one command and receives the addressed motor's feedback. M8010 is a
   // request-response protocol, so even a state read necessarily sends a command.
@@ -31,12 +32,21 @@ class MotorBus {
   // active holding. This is not a passive read and not an emergency stop.
   MotorState readStateZeroOutput(int motor_id);
 
+  // Lowest-motion-risk telemetry request supported by the vendor protocol.
+  // It sends mode=BRAKE and five explicit zero fields. This changes motor
+  // state and is not a safety-rated mechanical brake.
+  MotorState readStateBrake(int motor_id);
+
   // Returns the number of CRC-valid acknowledgements. It never throws so it can
   // be used during exception unwinding; a short count requires physical cutoff.
   int sendZeroOutput(const std::vector<int>& motor_ids,
                      int repeat_count = 3) noexcept;
+  int sendBrake(const std::vector<int>& motor_ids,
+                int repeat_count = 3) noexcept;
 
  private:
+  MotorState exchangeWithMode(int motor_id, const MotorCommand& command,
+                              int mode);
   class Impl;
   std::unique_ptr<Impl> impl_;
 };
@@ -44,4 +54,3 @@ class MotorBus {
 }  // namespace qmini_arm
 
 #endif  // QMINI_ARM_MOTOR_BUS_HPP_
-

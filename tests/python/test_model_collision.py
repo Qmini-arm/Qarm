@@ -14,7 +14,7 @@ def test_urdf_chain_and_zero_pose(model: ArmModel) -> None:
     assert model.joint_names == tuple(f"joint_{index}" for index in range(1, 7))
     expected_soft_limits_deg = [
         170.0,
-        85.94366927,
+        89.95437384,
         115.0,
         114.59155903,
         115.0,
@@ -22,6 +22,7 @@ def test_urdf_chain_and_zero_pose(model: ArmModel) -> None:
     ]
     assert np.allclose(np.degrees(model.lower), -np.asarray(expected_soft_limits_deg), atol=1e-6)
     assert np.allclose(np.degrees(model.upper), expected_soft_limits_deg, atol=1e-6)
+    assert np.isclose(np.degrees(model.hard_upper[1]), 100.26761415, atol=1e-6)
     assert np.allclose(
         model.fk(np.zeros(6))[:3, 3],
         [0.68206318, 0.04781823, -0.16252715],

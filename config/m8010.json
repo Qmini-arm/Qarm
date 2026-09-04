@@ -1,0 +1,28 @@
+{
+  "model": "GO-M8010-6",
+  "source": "https://www.unitree.com/cn/go1motor",
+  "gear_ratio": 6.33,
+  "mass_kg": 0.53,
+  "peak_torque_nm": 23.7,
+  "maximum_speed_rad_s_at_24v": 30.0,
+  "maximum_phase_current_a": 40.0,
+  "torque_constant_nm_per_a": 0.63895,
+  "voltage_range_v": [12.0, 30.0],
+  "recommended_voltage_v": 24.0,
+  "rs485_baud": 4000000,
+  "advertised_control_frequency_hz": 6000,
+  "motor_encoder_bits": 15,
+  "identified_parameters": {
+    "rotor_inertia_kg_m2": null,
+    "joint_armature_kg_m2": null,
+    "continuous_torque_nm": null,
+    "coulomb_friction_nm": null,
+    "viscous_damping_nms_per_rad": null,
+    "backlash_rad": null,
+    "command_delay_s": null
+  },
+  "notes": [
+    "Peak torque and maximum speed are separate maxima and do not define a constant rectangular operating envelope.",
+    "Unknown values must be identified on the assembled arm before claiming sim-to-real accuracy."
+  ]
+}

@@ -1,0 +1,107 @@
+{
+  "joint_names": [
+    "joint_1",
+    "joint_2",
+    "joint_3",
+    "joint_4",
+    "joint_5",
+    "joint_6"
+  ],
+  "motor_ids_by_joint": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5
+  ],
+  "angle_field": "q_output_rad",
+  "velocity_field": "dq_output_rad_s",
+  "torque_field": "tau_ideal_output_nm",
+  "direction": [
+    1,
+    1,
+    1,
+    1,
+    1,
+    1
+  ],
+  "zero_offset_rad": [
+    0.669967055,
+    -1.2124561300996763,
+    -1.8577593306928586,
+    0.3187612819535097,
+    0.0833634511,
+    0.54298169
+  ],
+  "zero_calibrated": true,
+  "direction_calibrated": true,
+  "calibrated": true,
+  "notes": [
+    "Hardware mapping confirmed by the operator: joint_1 through joint_6 use motor IDs 0 through 5 in order.",
+    "All six motor directions were verified by the operator against the live MuJoCo mirror after zero capture.",
+    "Zero capture uses config/calibration_pose.json; motor ID 5 is clockwise at its mechanical limit, mapped to joint_6=-1.57 rad.",
+    "The remote reader exposes both SDK-side and gear-ratio-converted values so fields can be changed without recompiling it.",
+    "tau_ideal_output_nm multiplies rotor torque by 6.33 but omits unknown gearbox efficiency; it is not calibrated output torque."
+  ],
+  "calibration": {
+    "captured_at_utc": "20260904T111534.517403Z",
+    "direction_verified_at_utc": "2026-09-04T12:15:20Z",
+    "direction_verification": "operator confirmed every motor direction matched the live MuJoCo mirror",
+    "board_boot_id": "e3584d60-2c8f-479e-a19f-0cb25e5c604a",
+    "motor_power_cycle_requires_recapture": true,
+    "query_mode": "BRAKE",
+    "angle_field": "q_output_rad",
+    "samples": 200,
+    "first_sequence": 0,
+    "last_sequence": 199,
+    "position_span_rad": [
+      9.083700000001027e-05,
+      9.083700000001027e-05,
+      9.083999999992542e-05,
+      9.086800000002171e-05,
+      9.088219999998925e-05,
+      9.083999999992542e-05
+    ],
+    "source_at_reference_rad": [
+      0.669967055,
+      0.535561681,
+      -1.70295286,
+      0.298708946,
+      0.0833634511,
+      -1.02701831
+    ],
+    "rotor_at_reference_rad": [
+      4.24089146,
+      3.39010549,
+      -10.7796917,
+      1.89082754,
+      0.527690649,
+      -6.50102568
+    ],
+    "reference_joint_rad": [
+      0.0,
+      1.7480178110996762,
+      0.1548064706928587,
+      -0.02005233595350972,
+      0.0,
+      -1.57
+    ],
+    "reference_joint_deg": [
+      0.0,
+      100.15404308970784,
+      8.869757412016472,
+      -1.1489142195145463,
+      0.0,
+      -89.95437383553924
+    ],
+    "rotor_zero_rad": [
+      4.24089146,
+      -7.674847254260952,
+      -11.759616659485797,
+      2.0177588265857165,
+      0.527690649,
+      3.4370743200000007
+    ]
+  }
+}

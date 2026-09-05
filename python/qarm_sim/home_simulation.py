@@ -282,11 +282,12 @@ def simulate_home_trajectory(
             * settings.gear_ratio
             * direction
             * (target_position - actual_position)
+            * gain
             + settings.kd_rotor
             * settings.gear_ratio
             * direction
             * (target_velocity - actual_velocity)
-        ) * gain
+        )
         requested_joint_torque = direction * settings.gear_ratio * (
             feedforward + rotor_pd
         )

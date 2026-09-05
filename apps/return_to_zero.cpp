@@ -38,6 +38,8 @@ constexpr double kMeasuredStartToleranceRad = 0.03;
 constexpr double kTrackingErrorTripRad = 0.20;
 constexpr double kFinalPositionToleranceRad = 0.04;
 constexpr double kGainRampS = 0.01;
+constexpr std::size_t kFocTransitionCycles = 3;
+constexpr double kFocTransitionPositionStepTripRad = 0.01;
 const JointVector kReturnSpeedSoftTripRadS = {
     0.50, 0.50, 0.50, 0.70, 1.00, 1.50};
 const JointVector kReturnSpeedHardTripRadS = {
@@ -503,6 +505,9 @@ int runHardware(const HomeConfig& config,
     qmini_arm::PerJointSpeedGuard speed_guard(
         kReturnSpeedSoftTripRadS, kReturnSpeedHardTripRadS,
         kReturnSpeedTripConsecutiveCycles);
+    qmini_arm::PerJointSpeedGuard transition_speed_guard(
+        kReturnSpeedSoftTripRadS, config.joint_speed_hard_trip_rad_s,
+        kReturnSpeedTripConsecutiveCycles);
     std::array<qmini_arm::MotorState, 6> states{};
     JointVector actual_position{};
     JointVector actual_velocity{};
@@ -572,7 +577,14 @@ int runHardware(const HomeConfig& config,
       actual_velocity = jointVelocity(states, config);
       validatePoseLimits(actual_position, config,
                          config.runtime_limit_margin_rad, true);
-      speed_guard.observeFrame(actual_velocity);
+      if (cycle < kFocTransitionCycles) {
+        for (std::size_t index = 0; index < actual_velocity.size(); ++index) {
+          transition_speed_guard.enforceHardTrip(index,
+                                                 actual_velocity[index]);
+        }
+      } else {
+        speed_guard.observeFrame(actual_velocity);
+      }
       const JointVector joint_torque =
           gravity.compensationTorque(actual_position);
       const JointVector requested_rotor_torque =
@@ -602,19 +614,34 @@ int runHardware(const HomeConfig& config,
                                  config.gear_ratio *
                                  target.velocity_rad_s[index];
         command.kp = kKpRotor * gain_envelope;
-        command.kd = kKdRotor * gain_envelope;
+        // Apply damping on the very first FOC exchange. Ramping kd from zero
+        // left one un-damped mode-transition frame on low-inertia joints.
+        command.kd = kKdRotor;
         next[index] = bus->exchange(config.motor_ids[index], command);
         validateFeedback(next[index], config.motor_ids[index], bus->focMode(),
                          config);
-        speed_guard.enforceHardTrip(
-            index, config.directions[index] * next[index].velocity_rad_s /
-                       config.gear_ratio);
+        const double next_joint_velocity =
+            config.directions[index] * next[index].velocity_rad_s /
+            config.gear_ratio;
+        if (cycle < kFocTransitionCycles) {
+          transition_speed_guard.enforceHardTrip(index,
+                                                 next_joint_velocity);
+        } else {
+          speed_guard.enforceHardTrip(index, next_joint_velocity);
+        }
       }
       if (stop_requested) break;
       states = next;
       previous_rotor_torque = rotor_torque;
       const JointVector measured = jointPosition(states, config);
       for (std::size_t index = 0; index < 6; ++index) {
+        if (cycle < kFocTransitionCycles &&
+            std::abs(measured[index] - actual_position[index]) >
+                kFocTransitionPositionStepTripRad) {
+          throw std::runtime_error(
+              "joint_" + std::to_string(index + 1) +
+              " moved too far during the BRAKE-to-FOC transition");
+        }
         if (std::abs(measured[index] - target.position_rad[index]) >
             kTrackingErrorTripRad) {
           throw std::runtime_error("joint_" + std::to_string(index + 1) +

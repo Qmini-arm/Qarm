@@ -13,3 +13,8 @@ __pycache__/
 # Vendor SDK is kept outside this repository (or as a local working copy at
 # this path) and is resolved by cmake/UnitreeActuatorSDK.cmake.
 /unitree_actuator_sdk/
+
+# Web control platform generated files
+/platform/node_modules/
+/platform/dist/
+/platform/tsconfig.tsbuildinfo

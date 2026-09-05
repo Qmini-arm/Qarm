@@ -19,7 +19,6 @@
 #include "qmini_arm/gravity_model.hpp"
 #include "qmini_arm/joint_trajectory.hpp"
 #include "qmini_arm/motor_bus.hpp"
-#include "qmini_arm/sine_trajectory.hpp"
 #include "qmini_arm/types.hpp"
 
 namespace {
@@ -37,7 +36,7 @@ constexpr double kPlanFinalToleranceRad = 1e-4;
 constexpr double kMeasuredStartToleranceRad = 0.03;
 constexpr double kTrackingErrorTripRad = 0.20;
 constexpr double kFinalPositionToleranceRad = 0.04;
-constexpr double kGainRampS = 0.01;
+constexpr double kStartAlignmentS = 1.0;
 constexpr std::size_t kFocTransitionCycles = 3;
 constexpr double kFocTransitionPositionStepTripRad = 0.01;
 const JointVector kReturnSpeedSoftTripRadS = {
@@ -464,6 +463,17 @@ void validateTrajectory(const qmini_arm::JointTrajectory& trajectory,
       config.runtime_limit_margin_rad, kMaximumPlanVelocityRadS,
       kMaximumPlanAccelerationRadS2, kMaximumSamplePeriodS,
       kMaximumPlanDurationS, kPlanFinalToleranceRad);
+  for (const auto& sample : trajectory) {
+    if (sample.time_s > kStartAlignmentS + 1e-9) break;
+    for (std::size_t index = 0; index < 6; ++index) {
+      if (std::abs(sample.position_rad[index] -
+                   trajectory.front().position_rad[index]) > 1e-6 ||
+          std::abs(sample.velocity_rad_s[index]) > 1e-8) {
+        throw std::runtime_error(
+            "return trajectory must hold its start for the alignment phase");
+      }
+    }
+  }
 }
 
 void dryRun(const qmini_arm::JointTrajectory& trajectory) {
@@ -525,11 +535,18 @@ int runHardware(const HomeConfig& config,
       if (std::abs(actual_position[index] -
                    trajectory.front().position_rad[index]) >
           kMeasuredStartToleranceRad) {
-        throw std::runtime_error(
-            "measured joint_" + std::to_string(index + 1) +
-            " does not match the collision-checked plan start");
+        std::ostringstream message;
+        message << "measured joint_" << index + 1 << "=" << std::fixed
+                << std::setprecision(6) << actual_position[index]
+                << " rad differs from plan start="
+                << trajectory.front().position_rad[index] << " rad by "
+                << std::abs(actual_position[index] -
+                            trajectory.front().position_rad[index])
+                << " rad (limit=" << kMeasuredStartToleranceRad << ')';
+        throw std::runtime_error(message.str());
       }
     }
+    const JointVector measured_start_position = actual_position;
 
     std::cout << "mode=FOC trajectory=" << options.trajectory_path
               << " samples=" << trajectory.size()
@@ -585,6 +602,21 @@ int runHardware(const HomeConfig& config,
       } else {
         speed_guard.observeFrame(actual_velocity);
       }
+      JointVector command_position = target.position_rad;
+      JointVector command_velocity = target.velocity_rad_s;
+      if (target.time_s < kStartAlignmentS) {
+        const double u = target.time_s / kStartAlignmentS;
+        const double blend = u * u * (3.0 - 2.0 * u);
+        const double blend_rate =
+            6.0 * u * (1.0 - u) / kStartAlignmentS;
+        for (std::size_t index = 0; index < 6; ++index) {
+          const double delta = trajectory.front().position_rad[index] -
+                               measured_start_position[index];
+          command_position[index] =
+              measured_start_position[index] + blend * delta;
+          command_velocity[index] = blend_rate * delta;
+        }
+      }
       const JointVector joint_torque =
           gravity.compensationTorque(actual_position);
       const JointVector requested_rotor_torque =
@@ -595,9 +627,6 @@ int runHardware(const HomeConfig& config,
           requested_rotor_torque, previous_rotor_torque,
           config.rotor_torque_caps_nm,
           config.rotor_torque_slew_nm_per_cycle, &saturated);
-      const double gain_envelope =
-          qmini_arm::smoothStep01(target.time_s / kGainRampS);
-
       std::array<qmini_arm::MotorState, 6> next{};
       for (std::size_t index = 0; index < 6; ++index) {
         if (stop_requested) break;
@@ -609,11 +638,13 @@ int runHardware(const HomeConfig& config,
         qmini_arm::MotorCommand command;
         command.torque_ff_nm = rotor_torque[index];
         command.position_rad =
-            rotorPosition(target.position_rad[index], index, config);
+            rotorPosition(command_position[index], index, config);
         command.velocity_rad_s = config.directions[index] *
                                  config.gear_ratio *
-                                 target.velocity_rad_s[index];
-        command.kp = kKpRotor * gain_envelope;
+                                 command_velocity[index];
+        // The measured pose is the first command target, so full position and
+        // velocity feedback can be enabled without a target step.
+        command.kp = kKpRotor;
         // Apply damping on the very first FOC exchange. Ramping kd from zero
         // left one un-damped mode-transition frame on low-inertia joints.
         command.kd = kKdRotor;
@@ -638,11 +669,19 @@ int runHardware(const HomeConfig& config,
         if (cycle < kFocTransitionCycles &&
             std::abs(measured[index] - actual_position[index]) >
                 kFocTransitionPositionStepTripRad) {
-          throw std::runtime_error(
-              "joint_" + std::to_string(index + 1) +
-              " moved too far during the BRAKE-to-FOC transition");
+          std::ostringstream message;
+          message << "joint_" << index + 1 << " moved " << std::fixed
+                  << std::setprecision(6)
+                  << std::abs(measured[index] - actual_position[index])
+                  << " rad during BRAKE-to-FOC cycle " << cycle
+                  << " (previous=" << actual_position[index]
+                  << ", current=" << measured[index]
+                  << ", dq_feedback=" << actual_velocity[index]
+                  << " rad/s, step_limit="
+                  << kFocTransitionPositionStepTripRad << " rad)";
+          throw std::runtime_error(message.str());
         }
-        if (std::abs(measured[index] - target.position_rad[index]) >
+        if (std::abs(measured[index] - command_position[index]) >
             kTrackingErrorTripRad) {
           throw std::runtime_error("joint_" + std::to_string(index + 1) +
                                    " exceeded the tracking-error trip");
@@ -652,7 +691,7 @@ int runHardware(const HomeConfig& config,
       if (cycle % 10 == 0) {
         std::cout << "t=" << std::fixed << std::setprecision(3)
                   << target.time_s << " saturated=" << saturated << ' ';
-        printVector("q_target", target.position_rad);
+        printVector("q_target", command_position);
         std::cout << ' ';
         printVector("q_actual", measured);
         std::cout << ' ';

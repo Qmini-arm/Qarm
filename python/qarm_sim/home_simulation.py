@@ -27,7 +27,7 @@ class HomeSimulationConfig:
     )
     rotor_torque_slew_nm_per_cycle: float = 2.0 / 256.0
     torque_quantization_nm: float = 1.0 / 256.0
-    gain_ramp_s: float = 0.01
+    start_alignment_s: float = 1.0
     # Conservative output-side regularization for the unidentified reflected
     # rotor/reducer inertia. Zero is known to be numerically non-physical for
     # the tiny wrist inertias; the value is a robustness scenario, not an
@@ -130,11 +130,6 @@ def add_endpoint_holds(
     )
 
 
-def _smoothstep01(value: float) -> float:
-    clipped = float(np.clip(value, 0.0, 1.0))
-    return clipped * clipped * (3.0 - 2.0 * clipped)
-
-
 def _interpolate_target(
     trajectory: TimedTrajectory, time_s: float
 ) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
@@ -161,6 +156,7 @@ def simulate_home_trajectory(
     *,
     directions: NDArray[np.float64] | None = None,
     goal_position_rad: NDArray[np.float64] | None = None,
+    initial_position_rad: NDArray[np.float64] | None = None,
     config: HomeSimulationConfig | None = None,
 ) -> HomeSimulationResult:
     """Track the planned trajectory with the real controller's idealized law.
@@ -178,6 +174,8 @@ def simulate_home_trajectory(
         raise ValueError("a positive assumed joint armature is required")
     if settings.hard_limit_tolerance_rad < 0.0:
         raise ValueError("hard-limit tolerance must be non-negative")
+    if settings.start_alignment_s <= 0.0:
+        raise ValueError("start-alignment duration must be positive")
     scene.model.dof_armature[scene.dof_addresses] = (
         settings.assumed_joint_armature_kg_m2
     )
@@ -205,7 +203,14 @@ def simulate_home_trajectory(
         raise ValueError("trajectory timestamps must be strictly increasing")
     control_period_s = float(np.min(periods))
 
-    set_mirrored_state(scene, trajectory.positions_rad[0], np.zeros(6))
+    initial_position = (
+        trajectory.positions_rad[0]
+        if initial_position_rad is None
+        else np.asarray(initial_position_rad, dtype=np.float64).reshape(6)
+    )
+    if not np.all(np.isfinite(initial_position)):
+        raise ValueError("initial position must be finite")
+    set_mirrored_state(scene, initial_position, np.zeros(6))
     # The scene model has real link inertia from URDF and explicit armature
     # only for this conservative simulation scenario. Make the initial state
     # authoritative after changing model parameters.
@@ -226,17 +231,26 @@ def simulate_home_trajectory(
     finite = True
     next_control_s = 0.0
     end_time_s = float(trajectory.times_s[-1])
-    target_position = trajectory.positions_rad[0].copy()
+    target_position = initial_position.copy()
     target_velocity = np.zeros(6, dtype=np.float64)
     feedforward = np.zeros(6, dtype=np.float64)
-    gain = 0.0
     first_control = True
 
     while scene.data.time < end_time_s - 0.5 * scene.model.opt.timestep:
         if scene.data.time + 1e-12 >= next_control_s:
-            target_position, target_velocity = _interpolate_target(
+            planned_position, planned_velocity = _interpolate_target(
                 trajectory, next_control_s
             )
+            if next_control_s < settings.start_alignment_s:
+                u = next_control_s / settings.start_alignment_s
+                blend = u * u * (3.0 - 2.0 * u)
+                blend_rate = 6.0 * u * (1.0 - u) / settings.start_alignment_s
+                start_delta = trajectory.positions_rad[0] - initial_position
+                target_position = initial_position + blend * start_delta
+                target_velocity = blend_rate * start_delta
+            else:
+                target_position = planned_position
+                target_velocity = planned_velocity
             actual_position = scene.data.qpos[scene.qpos_addresses].copy()
 
             gravity_data.qpos[scene.qpos_addresses] = actual_position
@@ -264,7 +278,6 @@ def simulate_home_trajectory(
             quantum = settings.torque_quantization_nm
             feedforward = np.trunc(feedforward / quantum) * quantum
             previous_feedforward = feedforward
-            gain = _smoothstep01(next_control_s / settings.gain_ramp_s)
             maximum_tracking_error = np.maximum(
                 maximum_tracking_error,
                 np.abs(target_position - actual_position),
@@ -282,7 +295,6 @@ def simulate_home_trajectory(
             * settings.gear_ratio
             * direction
             * (target_position - actual_position)
-            * gain
             + settings.kd_rotor
             * settings.gear_ratio
             * direction

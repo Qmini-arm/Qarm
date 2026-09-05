@@ -548,6 +548,7 @@ def command_inspect_stream(args: argparse.Namespace) -> int:
                     {
                         "sequence": sample.sequence,
                         "joint_position_rad": state.position.tolist(),
+                        "joint_position_deg": np.degrees(state.position).tolist(),
                         "joint_velocity_rad_s": state.velocity.tolist(),
                         "joint_torque_nm": state.torque.tolist(),
                         "temperature_c": state.temperature_c.tolist(),

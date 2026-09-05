@@ -174,17 +174,61 @@ class MotionPlanner:
         """Plan to the URDF zero configuration without performing hardware I/O."""
         return self.plan_to_configuration(start_q, np.zeros(self.model.dof, dtype=np.float64))
 
+    def plan_calibration_pose(
+        self,
+        start_q: npt.ArrayLike,
+        calibration_q: npt.ArrayLike,
+    ) -> JointMotionPlan:
+        """Plan to the desk-supported calibration pose.
+
+        The calibration pose is allowed to use the URDF hard limits because it
+        is a manually supported power-down pose, not a normal operating target.
+        Intermediate samples stay within the hard envelope and remain subject
+        to continuous self-collision checking.
+        """
+        start = self._validated_configuration(start_q, label="start")
+        goal = self._validated_configuration(
+            calibration_q,
+            label="calibration goal",
+            lower=self.model.hard_lower,
+            upper=self.model.hard_upper,
+        )
+        waypoints = self._joint_path(
+            start,
+            goal,
+            lower=self.model.hard_lower,
+            upper=self.model.hard_upper,
+        )
+        path_kind = "joint_rrt" if len(waypoints) > 2 else "joint_direct"
+        trajectory = quintic_time_parameterize(
+            waypoints,
+            np.minimum(self.model.velocity, self.config.velocity_limit_rad_s),
+            self.config.acceleration_limit_rad_s2,
+            self.config.control_period_s,
+        )
+        if not self.collision.path_is_free(trajectory.positions_rad):
+            raise ValueError(
+                "time-parameterized calibration path failed self-collision "
+                "validation; retry planning with a different seed or start pose"
+            )
+        return JointMotionPlan(goal, path_kind, waypoints, trajectory)
+
     def _validated_configuration(
         self,
         q: npt.ArrayLike,
         *,
         label: str,
+        lower: npt.ArrayLike | None = None,
+        upper: npt.ArrayLike | None = None,
     ) -> FloatArray:
         values = np.asarray(q, dtype=np.float64).reshape(self.model.dof)
         if not np.all(np.isfinite(values)):
             raise ValueError(f"{label} configuration must be finite")
-        if not self.model.within_limits(values):
-            raise ValueError(f"{label} configuration violates the URDF soft limits")
+        lower_values = self.model.lower if lower is None else np.asarray(lower)
+        upper_values = self.model.upper if upper is None else np.asarray(upper)
+        if np.any(values < lower_values) or np.any(values > upper_values):
+            envelope = "URDF soft limits" if lower is None else "URDF hard limits"
+            raise ValueError(f"{label} configuration violates the {envelope}")
         collisions = self.collision.check(values)
         if collisions:
             raise ValueError(
@@ -211,23 +255,46 @@ class MotionPlanner:
         assert last_result is not None
         return np.asarray(path), last_result
 
-    def _joint_path(self, start: FloatArray, goal: FloatArray) -> FloatArray:
+    def _joint_path(
+        self,
+        start: FloatArray,
+        goal: FloatArray,
+        *,
+        lower: npt.ArrayLike | None = None,
+        upper: npt.ArrayLike | None = None,
+    ) -> FloatArray:
         if self.collision.segment_is_free(start, goal):
             return np.asarray([start, goal])
-        path = self._rrt_connect(start, goal)
+        path = self._rrt_connect(start, goal, lower=lower, upper=upper)
         if path is None:
             raise ValueError("no self-collision-free joint path found within the RRT budget")
         return self._shortcut(path)
 
-    def _rrt_connect(self, start: FloatArray, goal: FloatArray) -> FloatArray | None:
+    def _rrt_connect(
+        self,
+        start: FloatArray,
+        goal: FloatArray,
+        *,
+        lower: npt.ArrayLike | None = None,
+        upper: npt.ArrayLike | None = None,
+    ) -> FloatArray | None:
         rng = np.random.default_rng(self.config.random_seed)
+        lower_values = self.model.lower if lower is None else np.asarray(lower)
+        upper_values = self.model.upper if upper is None else np.asarray(upper)
         first = _Tree([start.copy()], [-1], True)
         second = _Tree([goal.copy()], [-1], False)
         for _ in range(self.config.rrt_iterations):
-            sample = self.model.random_configuration(rng)
-            index_a = self._extend(first, sample)
+            sample = rng.uniform(lower_values, upper_values)
+            index_a = self._extend(
+                first, sample, lower=lower_values, upper=upper_values
+            )
             if index_a is not None:
-                index_b = self._connect(second, first.nodes[index_a])
+                index_b = self._connect(
+                    second,
+                    first.nodes[index_a],
+                    lower=lower_values,
+                    upper=upper_values,
+                )
                 if index_b is not None:
                     path_a, path_b = first.path_to(index_a), second.path_to(index_b)
                     if first.rooted_at_start:
@@ -236,13 +303,31 @@ class MotionPlanner:
             first, second = second, first
         return None
 
-    def _nearest(self, tree: _Tree, target: FloatArray) -> int:
+    def _nearest(
+        self,
+        tree: _Tree,
+        target: FloatArray,
+        *,
+        lower: npt.ArrayLike | None = None,
+        upper: npt.ArrayLike | None = None,
+    ) -> int:
         nodes = np.asarray(tree.nodes)
-        scale = np.maximum(self.model.upper - self.model.lower, 1e-12)
+        lower_values = self.model.lower if lower is None else np.asarray(lower)
+        upper_values = self.model.upper if upper is None else np.asarray(upper)
+        scale = np.maximum(upper_values - lower_values, 1e-12)
         return int(np.argmin(np.linalg.norm((nodes - target) / scale, axis=1)))
 
-    def _extend(self, tree: _Tree, target: FloatArray) -> int | None:
-        nearest = self._nearest(tree, target)
+    def _extend(
+        self,
+        tree: _Tree,
+        target: FloatArray,
+        *,
+        lower: npt.ArrayLike | None = None,
+        upper: npt.ArrayLike | None = None,
+    ) -> int | None:
+        lower_values = self.model.lower if lower is None else np.asarray(lower)
+        upper_values = self.model.upper if upper is None else np.asarray(upper)
+        nearest = self._nearest(tree, target, lower=lower_values, upper=upper_values)
         source = tree.nodes[nearest]
         delta = target - source
         distance = float(np.linalg.norm(delta))
@@ -251,15 +336,24 @@ class MotionPlanner:
             if distance <= self.config.rrt_step_rad
             else (source + delta * (self.config.rrt_step_rad / distance))
         )
+        if np.any(candidate < lower_values) or np.any(candidate > upper_values):
+            return None
         if not self.collision.segment_is_free(source, candidate):
             return None
         tree.nodes.append(candidate)
         tree.parents.append(nearest)
         return len(tree.nodes) - 1
 
-    def _connect(self, tree: _Tree, target: FloatArray) -> int | None:
+    def _connect(
+        self,
+        tree: _Tree,
+        target: FloatArray,
+        *,
+        lower: npt.ArrayLike | None = None,
+        upper: npt.ArrayLike | None = None,
+    ) -> int | None:
         while True:
-            index = self._extend(tree, target)
+            index = self._extend(tree, target, lower=lower, upper=upper)
             if index is None:
                 return None
             if np.linalg.norm(tree.nodes[index] - target) <= 1e-10:

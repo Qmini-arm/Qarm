@@ -32,6 +32,8 @@ def test_mujoco_return_home_experiment_tracks_bounded_plan(
     assert result.passed
     assert result.hard_limit_violations == 0
     assert result.contact_steps == 0
+    assert result.floor_contact_steps == 0
+    assert result.final_floor_contact is False
     assert np.max(np.abs(result.final_error_rad)) <= 0.04
     assert np.all(
         result.maximum_speed_rad_s

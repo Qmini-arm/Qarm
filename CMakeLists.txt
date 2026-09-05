@@ -94,7 +94,7 @@ if(BUILD_TESTING AND QMINI_ARM_BUILD_TESTS)
     add_test(NAME return_to_zero_dry_run
              COMMAND qmini_return_to_zero
                      --config ${CMAKE_CURRENT_SOURCE_DIR}/config/gravity_comp.conf
-                     --trajectory ${CMAKE_CURRENT_SOURCE_DIR}/tests/data/home_zero.csv
+                     --trajectory ${CMAKE_CURRENT_SOURCE_DIR}/tests/data/calibration_home.csv
                      --dry-run)
     add_test(NAME sine_reject_duplicate_ids
              COMMAND qmini_sine_position --dry-run --ids 0,1,1)

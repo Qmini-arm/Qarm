@@ -97,6 +97,8 @@ struct ControllerConfig {
   JointVector reference_joint_rad{};
   JointVector soft_lower_rad{};
   JointVector soft_upper_rad{};
+  JointVector hard_lower_rad{};
+  JointVector hard_upper_rad{};
   double startup_limit_margin_rad = 0.0;
   double runtime_limit_margin_rad = 0.0;
   double max_compensation_scale = 0.0;
@@ -163,6 +165,8 @@ ControllerConfig loadConfig(const std::string& path) {
       "reference_joint_rad",
       "soft_lower_rad",
       "soft_upper_rad",
+      "hard_lower_rad",
+      "hard_upper_rad",
       "startup_limit_margin_rad",
       "runtime_limit_margin_rad",
       "max_compensation_scale",
@@ -206,6 +210,10 @@ ControllerConfig loadConfig(const std::string& path) {
       "soft_lower_rad", required(values, "soft_lower_rad"), parseDouble);
   config.soft_upper_rad = parseArray<double>(
       "soft_upper_rad", required(values, "soft_upper_rad"), parseDouble);
+  config.hard_lower_rad = parseArray<double>(
+      "hard_lower_rad", required(values, "hard_lower_rad"), parseDouble);
+  config.hard_upper_rad = parseArray<double>(
+      "hard_upper_rad", required(values, "hard_upper_rad"), parseDouble);
   config.startup_limit_margin_rad = parseDouble(
       "startup_limit_margin_rad", required(values, "startup_limit_margin_rad"));
   config.runtime_limit_margin_rad = parseDouble(
@@ -273,6 +281,8 @@ ControllerConfig loadConfig(const std::string& path) {
       throw std::runtime_error("directions must contain only +1 or -1");
     }
     if (config.soft_lower_rad[index] >= config.soft_upper_rad[index] ||
+        config.hard_lower_rad[index] >= config.soft_lower_rad[index] ||
+        config.hard_upper_rad[index] <= config.soft_upper_rad[index] ||
         config.rotor_torque_caps_nm[index] <= 0.0 ||
         config.rotor_torque_caps_nm[index] > 2.0 ||
         config.joint_speed_trip_rad_s[index] <= 0.0 ||

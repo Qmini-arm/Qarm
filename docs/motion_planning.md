@@ -19,10 +19,12 @@
                          M8010 六轴逐周期控制参数
 ```
 
-`MotionPlanner.plan_home(start_q)` 是回到 URDF 零位的关节空间接口；它和
+`MotionPlanner.plan_home(start_q)` 是回到数学 URDF 零位的关节空间接口；它和
 `plan_to_configuration(start_q, goal_q)` 共用起点/终点软限位、自碰撞检查、RRT-Connect
-兜底和五次曲线时间参数化。`qarm-sim plan-home` 将这条轨迹导出为关节 CSV，并用
-MuJoCo 做离线闭环实验；CSV 不是电机协议帧，也不会打开串口。实机执行必须经过
+兜底和五次曲线时间参数化。`MotionPlanner.plan_calibration_pose(start_q, calibration_q)`
+用于桌面支撑标定位；`qarm-sim plan-home` 使用该目标，`qarm-sim plan-urdf-zero`
+才使用数学零位。两者都将轨迹导出为关节 CSV，并用 MuJoCo 做离线闭环实验；CSV 不是
+电机协议帧，也不会打开串口。实机执行必须经过
 `qmini-return-home` 的 C++ 安全门，重新核对当前反馈、标定 boot ID、速度、温度、
 通信和物理急停。
 

@@ -105,6 +105,10 @@ JointTrajectory loadJointTrajectoryCsv(const std::string& path) {
 void validateHomeTrajectory(const JointTrajectory& trajectory,
                             const JointVector& soft_lower_rad,
                             const JointVector& soft_upper_rad,
+                            const JointVector& hard_lower_rad,
+                            const JointVector& hard_upper_rad,
+                            const JointVector& goal_position_rad,
+                            bool allow_hard_limit_goal,
                             double limit_margin_rad,
                             double maximum_velocity_rad_s,
                             double maximum_acceleration_rad_s2,
@@ -123,6 +127,14 @@ void validateHomeTrajectory(const JointTrajectory& trajectory,
   validatePositiveFinite(maximum_sample_period_s, "maximum sample period");
   validatePositiveFinite(maximum_duration_s, "maximum duration");
   validatePositiveFinite(final_tolerance_rad, "final tolerance");
+  for (std::size_t joint = 0; joint < 6; ++joint) {
+    if (!std::isfinite(hard_lower_rad[joint]) ||
+        !std::isfinite(hard_upper_rad[joint]) ||
+        !std::isfinite(goal_position_rad[joint]) ||
+        hard_lower_rad[joint] >= hard_upper_rad[joint]) {
+      throw std::invalid_argument("invalid hard limits or trajectory goal");
+    }
+  }
   if (std::abs(trajectory.front().time_s) > 1e-9) {
     throw std::runtime_error("home trajectory must start at t=0");
   }
@@ -142,9 +154,18 @@ void validateHomeTrajectory(const JointTrajectory& trajectory,
       if (!std::isfinite(position) || !std::isfinite(velocity)) {
         throw std::runtime_error("trajectory contains a non-finite joint value");
       }
-      if (soft_lower_rad[joint] >= soft_upper_rad[joint] ||
-          position <= soft_lower_rad[joint] + limit_margin_rad ||
-          position >= soft_upper_rad[joint] - limit_margin_rad) {
+      if (soft_lower_rad[joint] >= soft_upper_rad[joint]) {
+        throw std::runtime_error("invalid soft limits");
+      }
+      if (allow_hard_limit_goal) {
+        if (position < hard_lower_rad[joint] - 1e-8 ||
+            position > hard_upper_rad[joint] + 1e-8) {
+          throw std::runtime_error("trajectory joint_" +
+                                   std::to_string(joint + 1) +
+                                   " violates the hard limits");
+        }
+      } else if (position <= soft_lower_rad[joint] + limit_margin_rad ||
+                 position >= soft_upper_rad[joint] - limit_margin_rad) {
         throw std::runtime_error("trajectory joint_" +
                                  std::to_string(joint + 1) +
                                  " violates the guarded soft limits");
@@ -184,11 +205,12 @@ void validateHomeTrajectory(const JointTrajectory& trajectory,
 
   for (std::size_t joint = 0; joint < 6; ++joint) {
     if (std::abs(trajectory.front().velocity_rad_s[joint]) > 1e-8 ||
-        std::abs(trajectory.back().position_rad[joint]) >
+        std::abs(trajectory.back().position_rad[joint] -
+                 goal_position_rad[joint]) >
             final_tolerance_rad ||
         std::abs(trajectory.back().velocity_rad_s[joint]) > 1e-8) {
       throw std::runtime_error(
-          "home trajectory must start stopped and finish stopped at URDF zero");
+          "home trajectory must start stopped and finish stopped at its goal");
     }
   }
 }

@@ -56,7 +56,8 @@ def _parser() -> argparse.ArgumentParser:
     plan.add_argument("--output", type=Path, help="write the joint trajectory as CSV")
 
     plan_home = commands.add_parser(
-        "plan-home", help="plan an offline collision-free trajectory to the URDF zero pose"
+        "plan-home",
+        help="plan an offline return to the desk-supported calibration pose",
     )
     _motion_model_arguments(plan_home)
     plan_home.add_argument(
@@ -67,6 +68,22 @@ def _parser() -> argparse.ArgumentParser:
         help="explicit current joint state in degrees; no hardware state is read",
     )
     plan_home.add_argument("--output", type=Path, help="write the joint trajectory as CSV")
+
+    plan_urdf_zero = commands.add_parser(
+        "plan-urdf-zero",
+        help="plan an offline collision-free trajectory to the mathematical URDF zero",
+    )
+    _motion_model_arguments(plan_urdf_zero)
+    plan_urdf_zero.add_argument(
+        "--start-deg",
+        type=float,
+        nargs=6,
+        required=True,
+        help="explicit current joint state in degrees; no hardware state is read",
+    )
+    plan_urdf_zero.add_argument(
+        "--output", type=Path, help="write the joint trajectory as CSV"
+    )
 
     workspace = commands.add_parser(
         "workspace", help="sample offline collision-free FK workspace points"
@@ -349,7 +366,7 @@ def command_plan(args: argparse.Namespace) -> int:
     return 0
 
 
-def command_plan_home(args: argparse.Namespace) -> int:
+def _command_plan_home(args: argparse.Namespace, *, calibration_pose: bool) -> int:
     motion = OfflineMotion.load(
         args.urdf,
         planner_config=PlannerConfig(
@@ -359,18 +376,26 @@ def command_plan_home(args: argparse.Namespace) -> int:
         ),
     )
     start = np.radians(np.asarray(args.start_deg, dtype=np.float64))
-    plan = motion.planner.plan_home(start)
+    mapping = JointMap.load()
+    if calibration_pose:
+        if not mapping.zero_calibrated or mapping.calibration_reference_joint_rad is None:
+            raise ValueError("calibration reference pose is unavailable; capture zero first")
+        goal = mapping.calibration_reference_joint_rad
+        plan = motion.planner.plan_calibration_pose(start, goal)
+    else:
+        goal = np.zeros(motion.model.dof, dtype=np.float64)
+        plan = motion.planner.plan_home(start)
     trajectory = add_endpoint_holds(
         plan.trajectory,
         control_period_s=HOME_CONTROL_PERIOD_S,
         start_hold_s=HOME_START_HOLD_S,
         end_hold_s=HOME_END_HOLD_S,
     )
-    mapping = JointMap.load()
     simulation = simulate_home_trajectory(
         build_scene(mapping=mapping),
         trajectory,
         directions=mapping.direction,
+        goal_position_rad=goal,
     )
     if not simulation.passed:
         raise RuntimeError(
@@ -378,14 +403,24 @@ def command_plan_home(args: argparse.Namespace) -> int:
             f"max_speed={np.max(simulation.maximum_speed_rad_s):.3f} rad/s, "
             f"max_tracking_error={np.max(simulation.maximum_tracking_error_rad):.3f} rad, "
             f"contacts={simulation.contact_steps}, "
-            f"torque_saturation_steps={simulation.torque_saturation_steps}"
+            f"torque_saturation_steps={simulation.torque_saturation_steps}, "
+            f"hard_limit_violations={simulation.hard_limit_violations}"
+        )
+    if calibration_pose and not simulation.final_floor_contact:
+        raise RuntimeError(
+            "MuJoCo calibration trajectory reached the joint target without "
+            "a final desk/floor contact"
         )
     result = _offline_result(
         frame="base_link",
         joint_names=list(motion.model.joint_names),
         start_joint_position_rad=start.tolist(),
         goal_joint_position_rad=plan.goal_position_rad.tolist(),
-        goal="URDF zero configuration",
+        goal=(
+            "desk-supported calibration pose"
+            if calibration_pose
+            else "URDF zero configuration"
+        ),
         path_kind=plan.path_kind,
         waypoints=len(plan.waypoints_rad),
         planner_velocity_limit_rad_s=HOME_VELOCITY_LIMIT_RAD_S,
@@ -402,6 +437,14 @@ def command_plan_home(args: argparse.Namespace) -> int:
     )
     print(json.dumps(result, indent=2))
     return 0
+
+
+def command_plan_home(args: argparse.Namespace) -> int:
+    return _command_plan_home(args, calibration_pose=True)
+
+
+def command_plan_urdf_zero(args: argparse.Namespace) -> int:
+    return _command_plan_home(args, calibration_pose=False)
 
 
 def command_workspace(args: argparse.Namespace) -> int:
@@ -645,6 +688,8 @@ def main(argv: list[str] | None = None) -> int:
             return command_plan(args)
         if args.command == "plan-home":
             return command_plan_home(args)
+        if args.command == "plan-urdf-zero":
+            return command_plan_urdf_zero(args)
         if args.command == "workspace":
             return command_workspace(args)
         if args.command == "solve-calibration-pose":

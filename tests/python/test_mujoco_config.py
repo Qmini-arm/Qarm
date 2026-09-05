@@ -52,6 +52,14 @@ def test_gravity_deploy_config_matches_session_calibration() -> None:
         floats("joint_speed_hard_trip_rad_s"),
         [1.00, 1.00, 1.00, 1.40, 2.00, 2.00],
     )
+    assert np.allclose(
+        floats("hard_lower_rad"),
+        [-3.141592654, -1.75, -2.62, -2.094395102, -2.094395102, -1.57],
+    )
+    assert np.allclose(
+        floats("hard_upper_rad"),
+        [3.141592654, 1.75, 2.62, 2.094395102, 2.094395102, 1.57],
+    )
     assert int(values["joint_speed_trip_consecutive_cycles"]) == 2
     assert float(values["rotor_torque_slew_nm_per_cycle"]) == 2.0 / 256.0
     assert float(values["rotor_feedback_torque_trip_nm"]) == 3.0

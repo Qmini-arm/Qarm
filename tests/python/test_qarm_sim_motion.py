@@ -49,11 +49,15 @@ def test_unified_plan_home_exports_offline_joint_trajectory(tmp_path, capsys) ->
     report = json.loads(capsys.readouterr().out)
     assert report["execution"] == "offline_only"
     assert report["hardware_io_performed"] is False
-    assert report["goal"] == "URDF zero configuration"
-    assert np.allclose(report["goal_joint_position_rad"], 0.0)
+    assert report["goal"] == "desk-supported calibration pose"
+    assert np.allclose(
+        report["goal_joint_position_rad"],
+        [0.0, 1.7480178110996762, 0.1548064706928587, -0.02005233595350972, 0.0, -1.57],
+    )
     assert report["path_kind"] == "joint_direct"
     assert report["mujoco_simulation"]["passed"] is True
     assert report["mujoco_simulation"]["hard_limit_violations"] == 0
+    assert report["mujoco_simulation"]["final_floor_contact"] is True
     assert report["control_period_s"] == 0.01
     assert report["trajectory_csv"] == str(output.resolve())
 
@@ -62,7 +66,18 @@ def test_unified_plan_home_exports_offline_joint_trajectory(tmp_path, capsys) ->
     assert len(rows) == report["samples"]
     assert np.isclose(float(rows[0]["joint_1_position_rad"]), np.radians(10.0), atol=1e-9)
     assert np.isclose(float(rows[1]["time_s"]) - float(rows[0]["time_s"]), 0.01)
-    assert all(float(rows[-1][f"joint_{index}_position_rad"]) == 0.0 for index in range(1, 7))
+    expected_goal = [
+        0.0,
+        1.7480178110996762,
+        0.1548064706928587,
+        -0.02005233595350972,
+        0.0,
+        -1.57,
+    ]
+    assert np.allclose(
+        [float(rows[-1][f"joint_{index}_position_rad"]) for index in range(1, 7)],
+        expected_goal,
+    )
     assert all(float(rows[-1][f"joint_{index}_velocity_rad_s"]) == 0.0 for index in range(1, 7))
 
 
@@ -107,3 +122,24 @@ def test_motion_fk_matches_mujoco_in_base_link_frame() -> None:
         # MuJoCo's URDF normalization serializes poses at slightly lower precision.
         assert np.allclose(analytic[:3, 3], mujoco_position, rtol=0.0, atol=1e-6)
         assert np.allclose(analytic[:3, :3], mujoco_rotation, rtol=0.0, atol=3e-6)
+
+
+def test_unified_plan_urdf_zero_is_separate_from_power_down_pose(capsys) -> None:
+    result = main(
+        [
+            "plan-urdf-zero",
+            "--start-deg",
+            "10",
+            "5",
+            "10",
+            "5",
+            "-5",
+            "5",
+        ]
+    )
+
+    assert result == 0
+    report = json.loads(capsys.readouterr().out)
+    assert report["goal"] == "URDF zero configuration"
+    assert np.allclose(report["goal_joint_position_rad"], 0.0)
+    assert report["mujoco_simulation"]["passed"] is True

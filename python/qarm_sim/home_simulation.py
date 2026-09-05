@@ -33,6 +33,7 @@ class HomeSimulationConfig:
     # the tiny wrist inertias; the value is a robustness scenario, not an
     # identified M8010 parameter.
     assumed_joint_armature_kg_m2: float = 0.001
+    hard_limit_tolerance_rad: float = 1e-3
 
 
 @dataclass(frozen=True)
@@ -46,8 +47,11 @@ class HomeSimulationResult:
     feedforward_slew_steps: int
     hard_limit_violations: int
     contact_steps: int
+    floor_contact_steps: int
+    final_floor_contact: bool
     finite: bool
     assumed_joint_armature_kg_m2: float
+    hard_limit_tolerance_rad: float
 
     @property
     def passed(self) -> bool:
@@ -76,11 +80,14 @@ class HomeSimulationResult:
             "feedforward_slew_steps": self.feedforward_slew_steps,
             "hard_limit_violations": self.hard_limit_violations,
             "contact_steps": self.contact_steps,
+            "floor_contact_steps": self.floor_contact_steps,
+            "final_floor_contact": self.final_floor_contact,
             "finite": self.finite,
             "assumptions": {
                 "joint_armature_kg_m2": self.assumed_joint_armature_kg_m2,
                 "identified_joint_armature": False,
                 "gearbox_friction_backlash_and_delay_included": False,
+                "hard_limit_tolerance_rad": self.hard_limit_tolerance_rad,
             },
         }
 
@@ -153,19 +160,24 @@ def simulate_home_trajectory(
     trajectory: TimedTrajectory,
     *,
     directions: NDArray[np.float64] | None = None,
+    goal_position_rad: NDArray[np.float64] | None = None,
     config: HomeSimulationConfig | None = None,
 ) -> HomeSimulationResult:
     """Track the planned trajectory with the real controller's idealized law.
 
     The experiment uses MuJoCo rigid-body dynamics and contacts, rotor-side
     gains, Q8 feed-forward quantization, the deployed feed-forward caps, and
-    the deployed per-cycle slew. It intentionally cannot model unidentified
-    gearbox friction, backlash, communication delay, or the external cable.
+    the deployed per-cycle slew. Floor contact is reported separately because
+    it is expected for the supported calibration endpoint; non-floor contact is
+    treated as a collision. It intentionally cannot model unidentified gearbox
+    friction, backlash, communication delay, or the external cable.
     """
 
     settings = config or HomeSimulationConfig()
     if settings.assumed_joint_armature_kg_m2 <= 0.0:
         raise ValueError("a positive assumed joint armature is required")
+    if settings.hard_limit_tolerance_rad < 0.0:
+        raise ValueError("hard-limit tolerance must be non-negative")
     scene.model.dof_armature[scene.dof_addresses] = (
         settings.assumed_joint_armature_kg_m2
     )
@@ -181,6 +193,13 @@ def simulate_home_trajectory(
         raise ValueError("six positive rotor torque caps are required")
     if len(trajectory.times_s) < 2:
         raise ValueError("simulation requires at least two trajectory samples")
+    goal = (
+        trajectory.positions_rad[-1]
+        if goal_position_rad is None
+        else np.asarray(goal_position_rad, dtype=np.float64).reshape(6)
+    )
+    if not np.all(np.isfinite(goal)):
+        raise ValueError("goal position must be finite")
     periods = np.diff(trajectory.times_s)
     if np.any(periods <= 0.0):
         raise ValueError("trajectory timestamps must be strictly increasing")
@@ -200,6 +219,10 @@ def simulate_home_trajectory(
     feedforward_slew_steps = 0
     hard_limit_violations = 0
     contact_steps = 0
+    floor_contact_steps = 0
+    floor_geom_id = mujoco.mj_name2id(
+        scene.model, mujoco.mjtObj.mjOBJ_GEOM, "floor"
+    )
     finite = True
     next_control_s = 0.0
     end_time_s = float(trajectory.times_s[-1])
@@ -285,10 +308,31 @@ def simulate_home_trajectory(
         velocity = scene.data.qvel[scene.dof_addresses]
         maximum_speed = np.maximum(maximum_speed, np.abs(velocity))
         hard_limit_violations += int(
-            np.any(position < scene.model.jnt_range[scene.joint_ids, 0] - 1e-8)
-            or np.any(position > scene.model.jnt_range[scene.joint_ids, 1] + 1e-8)
+            np.any(
+                position
+                < scene.model.jnt_range[scene.joint_ids, 0]
+                - settings.hard_limit_tolerance_rad
+            )
+            or np.any(
+                position
+                > scene.model.jnt_range[scene.joint_ids, 1]
+                + settings.hard_limit_tolerance_rad
+            )
         )
-        contact_steps += int(scene.data.ncon > 0)
+        contact_steps += int(
+            any(
+                scene.data.contact[index].geom1 != floor_geom_id
+                and scene.data.contact[index].geom2 != floor_geom_id
+                for index in range(scene.data.ncon)
+            )
+        )
+        floor_contact_steps += int(
+            any(
+                scene.data.contact[index].geom1 == floor_geom_id
+                or scene.data.contact[index].geom2 == floor_geom_id
+                for index in range(scene.data.ncon)
+            )
+        )
         finite = finite and bool(
             np.all(np.isfinite(position))
             and np.all(np.isfinite(velocity))
@@ -298,9 +342,16 @@ def simulate_home_trajectory(
             break
 
     final_position = scene.data.qpos[scene.qpos_addresses].copy()
+    final_floor_contact = bool(
+        any(
+            scene.data.contact[index].geom1 == floor_geom_id
+            or scene.data.contact[index].geom2 == floor_geom_id
+            for index in range(scene.data.ncon)
+        )
+    )
     return HomeSimulationResult(
         final_position_rad=final_position,
-        final_error_rad=-final_position,
+        final_error_rad=goal - final_position,
         maximum_tracking_error_rad=maximum_tracking_error,
         maximum_speed_rad_s=maximum_speed,
         maximum_abs_joint_torque_nm=maximum_torque,
@@ -308,8 +359,11 @@ def simulate_home_trajectory(
         feedforward_slew_steps=feedforward_slew_steps,
         hard_limit_violations=hard_limit_violations,
         contact_steps=contact_steps,
+        floor_contact_steps=floor_contact_steps,
+        final_floor_contact=final_floor_contact,
         finite=finite,
         assumed_joint_armature_kg_m2=(
             settings.assumed_joint_armature_kg_m2
         ),
+        hard_limit_tolerance_rad=settings.hard_limit_tolerance_rad,
     )

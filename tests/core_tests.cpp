@@ -228,15 +228,28 @@ void testHomeTrajectoryContract() {
   require(trajectory.size() == 2, "home trajectory CSV row count failed");
   const qmini_arm::JointVector lower = {-1, -1, -1, -1, -1, -1};
   const qmini_arm::JointVector upper = {1, 1, 1, 1, 1, 1};
-  qmini_arm::validateHomeTrajectory(trajectory, lower, upper, 0.02, 0.3,
-                                    0.6, 0.05, 120.0, 1e-4);
+  const qmini_arm::JointVector goal{};
+  qmini_arm::validateHomeTrajectory(
+      trajectory, lower, upper, lower, upper, goal, false, 0.02, 0.3, 0.6,
+      0.05, 120.0, 1e-4);
+
+  const qmini_arm::JointVector hard_lower = {-2, -2, -2, -2, -2, -2};
+  const qmini_arm::JointVector hard_upper = {2, 2, 2, 2, 2, 2};
+  const qmini_arm::JointVector hard_goal = {0, 1.8, 0, 0, 0, -1.8};
+  qmini_arm::JointTrajectory calibration = trajectory;
+  calibration[0].position_rad = hard_goal;
+  calibration[1].position_rad = hard_goal;
+  qmini_arm::validateHomeTrajectory(
+      calibration, lower, upper, hard_lower, hard_upper, hard_goal, true, 0.02,
+      0.3, 0.6, 0.05, 120.0, 1e-4);
 
   qmini_arm::JointTrajectory too_fast = trajectory;
   too_fast[1].velocity_rad_s[3] = 0.31;
   requireThrows(
       [&]() {
-        qmini_arm::validateHomeTrajectory(too_fast, lower, upper, 0.02,
-                                          0.3, 0.6, 0.05, 120.0, 1e-4);
+        qmini_arm::validateHomeTrajectory(
+            too_fast, lower, upper, lower, upper, goal, false, 0.02, 0.3, 0.6,
+            0.05, 120.0, 1e-4);
       },
       "excessive home trajectory velocity was accepted");
 

@@ -156,6 +156,8 @@ struct HomeConfig {
   JointVector reference_joint_rad{};
   JointVector soft_lower_rad{};
   JointVector soft_upper_rad{};
+  JointVector hard_lower_rad{};
+  JointVector hard_upper_rad{};
   double startup_limit_margin_rad = 0.0;
   double runtime_limit_margin_rad = 0.0;
   JointVector rotor_torque_caps_nm{};
@@ -191,6 +193,10 @@ HomeConfig loadConfig(const std::string& path) {
       "soft_lower_rad", required(values, "soft_lower_rad"), parseDouble);
   config.soft_upper_rad = parseArray<double>(
       "soft_upper_rad", required(values, "soft_upper_rad"), parseDouble);
+  config.hard_lower_rad = parseArray<double>(
+      "hard_lower_rad", required(values, "hard_lower_rad"), parseDouble);
+  config.hard_upper_rad = parseArray<double>(
+      "hard_upper_rad", required(values, "hard_upper_rad"), parseDouble);
   config.startup_limit_margin_rad = parseDouble(
       "startup_limit_margin_rad", required(values, "startup_limit_margin_rad"));
   config.runtime_limit_margin_rad = parseDouble(
@@ -237,6 +243,8 @@ HomeConfig loadConfig(const std::string& path) {
     if (config.motor_ids[index] != static_cast<int>(index) ||
         (config.directions[index] != -1 && config.directions[index] != 1) ||
         config.soft_lower_rad[index] >= config.soft_upper_rad[index] ||
+        config.hard_lower_rad[index] >= config.soft_lower_rad[index] ||
+        config.hard_upper_rad[index] <= config.soft_upper_rad[index] ||
         config.rotor_torque_caps_nm[index] <= 0.0 ||
         config.rotor_torque_caps_nm[index] > 2.0 ||
         config.joint_speed_trip_rad_s[index] <= 0.0 ||
@@ -266,7 +274,8 @@ void printUsage(const char* program) {
   std::cout
       << "Usage: " << program
       << " --trajectory FILE (--dry-run | --enable-foc) [options]\n\n"
-      << "The CSV must come from qarm-sim plan-home and finish at URDF zero.\n\n"
+      << "The CSV must come from qarm-sim plan-home and finish at the desk-supported "
+         "calibration pose.\n\n"
       << "Options:\n"
       << "  --config FILE                     gravity config schema 2\n"
       << "  --trajectory FILE                 collision-checked joint CSV\n"
@@ -392,12 +401,19 @@ void validateFeedback(const qmini_arm::MotorState& state,
 
 void validatePoseLimits(const JointVector& position,
                         const HomeConfig& config,
-                        double margin) {
+                        double margin,
+                        bool allow_calibration_pose = false) {
   for (std::size_t index = 0; index < position.size(); ++index) {
-    if (position[index] <= config.soft_lower_rad[index] + margin ||
-        position[index] >= config.soft_upper_rad[index] - margin) {
+    const bool outside_guarded_soft_limits =
+        position[index] <= config.soft_lower_rad[index] + margin ||
+        position[index] >= config.soft_upper_rad[index] - margin;
+    const bool outside_hard_limits =
+        position[index] < config.hard_lower_rad[index] ||
+        position[index] > config.hard_upper_rad[index];
+    if (outside_hard_limits ||
+        (!allow_calibration_pose && outside_guarded_soft_limits)) {
       throw std::runtime_error("joint_" + std::to_string(index + 1) +
-                               " lacks the required soft-limit margin");
+                               " violates the active return pose limits");
     }
   }
 }
@@ -436,6 +452,8 @@ void validateTrajectory(const qmini_arm::JointTrajectory& trajectory,
                         const HomeConfig& config) {
   qmini_arm::validateHomeTrajectory(
       trajectory, config.soft_lower_rad, config.soft_upper_rad,
+      config.hard_lower_rad, config.hard_upper_rad,
+      config.reference_joint_rad, true,
       config.runtime_limit_margin_rad, kMaximumPlanVelocityRadS,
       kMaximumPlanAccelerationRadS2, kMaximumSamplePeriodS,
       kMaximumPlanDurationS, kPlanFinalToleranceRad);
@@ -549,7 +567,7 @@ int runHardware(const HomeConfig& config,
       actual_position = jointPosition(states, config);
       actual_velocity = jointVelocity(states, config);
       validatePoseLimits(actual_position, config,
-                         config.runtime_limit_margin_rad);
+                         config.runtime_limit_margin_rad, true);
       speed_guard.observeFrame(actual_velocity);
       const JointVector joint_torque =
           gravity.compensationTorque(actual_position);
@@ -614,24 +632,25 @@ int runHardware(const HomeConfig& config,
       ++cycle;
     }
 
-    bool reached_zero = !stop_requested;
-    if (reached_zero) {
+    bool reached_reference = !stop_requested;
+    if (reached_reference) {
       actual_position = jointPosition(states, config);
       for (std::size_t index = 0; index < 6; ++index) {
-        reached_zero = reached_zero &&
-                       std::abs(actual_position[index]) <=
+        reached_reference = reached_reference &&
+                       std::abs(actual_position[index] -
+                                config.reference_joint_rad[index]) <=
                            kFinalPositionToleranceRad;
       }
     }
 
-    if (!stop_requested && !reached_zero) {
+    if (!stop_requested && !reached_reference) {
       throw std::runtime_error(
-          "trajectory ended but measured joints did not settle at URDF zero");
+          "trajectory ended but measured joints did not settle at the calibration pose");
     }
     // Never put status logging ahead of the BRAKE request.
     finalBrake(*bus, config);
-    if (reached_zero) {
-      std::cerr << "return-to-zero reached the measured final tolerance\n";
+    if (reached_reference) {
+      std::cerr << "desk-supported calibration pose reached; BRAKE is active\n";
     }
     std::cerr << "timing: minor_deadline_misses=" << minor_deadline_misses
               << " maximum_lateness_ms=" << std::fixed << std::setprecision(3)

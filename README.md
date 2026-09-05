@@ -12,7 +12,7 @@ GO-M8010-6 通信、转子/关节坐标换算和台架测试；Python 层完成�
 - `qmini_motor_state`：读取指定串口、指定 ID 的电机状态；
 - `qmini_sine_position`：让 ID 0–5 执行相同的相对正弦位置测试。
 - `qmini_gravity_comp`：带保护的 100% 静态重力前馈实验；
-- `qmini_return_to_zero`：执行 MuJoCo 验证过的 CSV 回到 URDF 零位轨迹；
+- `qmini_return_to_zero`：执行 MuJoCo 验证过的 CSV 回到桌面支撑标定位；
 - `qmini-motion`：离线 FK/IK、可达空间、轨迹与可视化入口（不打开串口）。
 
 ## 目录结构
@@ -467,29 +467,40 @@ FOC 模式启动前要求五轮完整反馈、当前 boot ID、所有关节在�
 `SIGKILL`、USB 断开或整板故障时软件无法保证最后一帧 BRAKE 到达，实验期间必须
 始终保留机械支撑和物理断电手段。
 
-## 回到 URDF 零位
+## 回到桌面支撑标定位
 
+下电前的“回零”目标是桌面支撑标定姿态，而不是数学上的
+`q=[0,0,0,0,0,0]`。它包含 `joint_2=100.154°` 和 `joint_6=-90°`，位于正常
+运行软限位之外，但位于 URDF 硬限位内；只有机械臂沿轨迹回到桌面后才允许安全下电。
 回零分成离线规划/验证和实机执行两步。先在本机用同一份 URDF、碰撞检查器和 MuJoCo
-生成轨迹；`plan-home` 的 `--start-deg` 必须填写当前六个关节角，不能把标定姿态
-（`joint_2=100.154°`）直接当作运行起点，因为它位于运行软限位之外：
+生成轨迹；`plan-home` 的 `--start-deg` 必须填写当前六个关节角：
 
 ```bash
 UV_CACHE_DIR=/private/tmp/qarm_uv_cache uv run qarm-sim plan-home \
   --start-deg 10 5 10 5 -5 5 \
-  --output build/home_zero.csv
+  --output build/calibration_home.csv
+```
+
+数学 URDF 零位仍可单独规划，但不会用于下电：
+
+```bash
+UV_CACHE_DIR=/private/tmp/qarm_uv_cache uv run qarm-sim plan-urdf-zero \
+  --start-deg 10 5 10 5 -5 5 \
+  --output build/urdf_zero.csv
 ```
 
 该命令只做离线计算，不访问 SSH/串口。规划器先检查起点、零位和完整路径的 URDF
 自碰撞，必要时使用 RRT-Connect 绕开碰撞；随后用五次曲线限制到 `0.25 rad/s`、
 `0.50 rad/s²` 和 `10 ms` 控制周期。命令会再用 MuJoCo 闭环实验复现 M8010 的
 位置/速度控制、100% 重力前馈、Q8 力矩量化、已部署力矩帽和假设的
-`0.001 kg·m²` 反射关节惯量；只有无接触、无硬限位越界、无力矩饱和、速度和跟踪
-误差均通过时才写出 CSV。这个惯量仍未由实机辨识，MuJoCo 结果不能替代现场慢速验证。
+`0.001 kg·m²` 反射关节惯量；除预期的桌面接触外，只有无自碰撞、无硬限位越界、无
+力矩饱和、速度和跟踪误差均通过，且终点检测到桌面接触时才写出 CSV。这个惯量仍未
+由实机辨识，MuJoCo 结果不能替代现场慢速验证。
 
 开发板上的受保护执行器为 `~/.local/bin/qmini-return-home`。它只接受上述 13 列关节
 轨迹 CSV，不接受任意电机目标；启动前会重新读取六轴 BRAKE 反馈，确认当前关节角
 与轨迹首帧相差不超过 `0.03 rad`，检查标定 boot ID、ID 0--5、速度/温度/反馈和
-软限位，然后按轨迹发送带绝对转子位置、速度、位置增益、阻尼和 100% 重力前馈的
+活动限位（回标定位阶段允许进入已声明的硬限位区），然后按轨迹发送带绝对转子位置、速度、位置增益、阻尼和 100% 重力前馈的
 FOC 帧。故障或中断先尝试六轴 BRAKE，正常结束也先 BRAKE 再打印日志。
 
 实机操作示例（人在机械臂旁、机械支撑和物理断电就绪后）：
@@ -498,7 +509,7 @@ FOC 帧。故障或中断先尝试六轴 BRAKE，正常结束也先 BRAKE 再打
 # 开发板本地执行；日志写本地文件，避免 SSH 输出背压阻塞控制线程
 mkdir -p ~/.local/state/qarm
 ~/.local/bin/qmini-return-home \
-  --trajectory /path/to/home_zero.csv \
+  --trajectory /path/to/calibration_home.csv \
   --enable-foc \
   --acknowledge-supported-arm \
   --acknowledge-estop-ready \
@@ -507,6 +518,8 @@ mkdir -p ~/.local/state/qarm
   >~/.local/state/qarm/return-home-$(date +%Y%m%dT%H%M%S).log 2>&1
 ```
 
-`--dry-run` 可在没有串口时验证 CSV 和配置；它不会读取开发板。实机回零不是“校准
-姿态”动作，不能从超软限位姿态启动；如果现场反馈角度不匹配、刚重启过开发板/电机、
-CSV 不是当前 URDF 生成的文件，程序会拒绝发出第一帧 FOC。
+`--dry-run` 可在没有串口时验证 CSV 和配置；它不会读取开发板。这个流程是“下电前返回
+支撑姿态”，不是跨上电自动寻找机械零点；实机回标定位不能从
+桌面支撑标定姿态以外的超限姿态启动；如果现场反馈角度不匹配、刚重启过开发板/电机、
+CSV 不是当前 URDF 生成的文件，程序会拒绝发出第一帧 FOC。到达终点后先确认电机
+反馈仍在标定姿态，再切 BRAKE，最后由现场人员执行物理下电。

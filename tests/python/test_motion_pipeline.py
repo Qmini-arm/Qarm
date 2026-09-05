@@ -143,3 +143,28 @@ def test_plan_home_at_zero_still_returns_a_stopped_trajectory(
     assert len(plan.trajectory.times_s) == 2
     assert np.allclose(plan.trajectory.positions_rad, 0.0)
     assert np.allclose(plan.trajectory.velocities_rad_s, 0.0)
+
+
+def test_plan_calibration_pose_allows_the_supported_hard_limit_endpoint(
+    model: ArmModel,
+    collision: CollisionChecker,
+) -> None:
+    from qarm_sim.config import JointMap
+
+    mapping = JointMap.load()
+    assert mapping.calibration_reference_joint_rad is not None
+    start = np.radians([10.0, 5.0, 10.0, 5.0, -5.0, 5.0])
+    plan = MotionPlanner(
+        model,
+        collision,
+        config=PlannerConfig(
+            velocity_limit_rad_s=0.25,
+            acceleration_limit_rad_s2=0.50,
+            control_period_s=0.01,
+        ),
+    ).plan_calibration_pose(start, mapping.calibration_reference_joint_rad)
+
+    assert np.allclose(plan.goal_position_rad, mapping.calibration_reference_joint_rad)
+    assert np.all(model.hard_lower <= plan.trajectory.positions_rad)
+    assert np.all(plan.trajectory.positions_rad <= model.hard_upper)
+    assert collision.path_is_free(plan.trajectory.positions_rad)

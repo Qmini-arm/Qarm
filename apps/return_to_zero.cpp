@@ -38,6 +38,11 @@ constexpr double kMeasuredStartToleranceRad = 0.03;
 constexpr double kTrackingErrorTripRad = 0.20;
 constexpr double kFinalPositionToleranceRad = 0.04;
 constexpr double kGainRampS = 0.01;
+const JointVector kReturnSpeedSoftTripRadS = {
+    0.50, 0.50, 0.50, 0.70, 1.00, 1.50};
+const JointVector kReturnSpeedHardTripRadS = {
+    1.00, 1.00, 1.00, 1.40, 2.00, 2.00};
+constexpr std::size_t kReturnSpeedTripConsecutiveCycles = 2;
 
 volatile std::sig_atomic_t stop_requested = 0;
 volatile std::sig_atomic_t stop_signal = 0;
@@ -496,9 +501,8 @@ int runHardware(const HomeConfig& config,
     }
 
     qmini_arm::PerJointSpeedGuard speed_guard(
-        config.joint_speed_trip_rad_s,
-        config.joint_speed_hard_trip_rad_s,
-        static_cast<std::size_t>(config.joint_speed_trip_consecutive_cycles));
+        kReturnSpeedSoftTripRadS, kReturnSpeedHardTripRadS,
+        kReturnSpeedTripConsecutiveCycles);
     std::array<qmini_arm::MotorState, 6> states{};
     JointVector actual_position{};
     JointVector actual_velocity{};

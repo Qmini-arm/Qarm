@@ -250,7 +250,7 @@ HomeConfig loadConfig(const std::string& path) {
         config.joint_speed_trip_rad_s[index] <= 0.0 ||
         config.joint_speed_hard_trip_rad_s[index] <=
             config.joint_speed_trip_rad_s[index] ||
-        config.joint_speed_hard_trip_rad_s[index] > 2.0) {
+        config.joint_speed_hard_trip_rad_s[index] > 6.0) {
       throw std::runtime_error("invalid per-joint return-to-zero config");
     }
   }

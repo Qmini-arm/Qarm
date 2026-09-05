@@ -46,11 +46,11 @@ def test_gravity_deploy_config_matches_session_calibration() -> None:
     )
     assert np.allclose(
         floats("joint_speed_trip_rad_s"),
-        [0.50, 0.50, 0.50, 0.70, 1.00, 1.50],
+        [0.80, 0.80, 0.80, 1.20, 2.00, 2.50],
     )
     assert np.allclose(
         floats("joint_speed_hard_trip_rad_s"),
-        [1.00, 1.00, 1.00, 1.40, 2.00, 2.00],
+        [1.50, 1.50, 1.50, 2.40, 4.00, 5.00],
     )
     assert np.allclose(
         floats("hard_lower_rad"),
@@ -60,7 +60,7 @@ def test_gravity_deploy_config_matches_session_calibration() -> None:
         floats("hard_upper_rad"),
         [3.141592654, 1.75, 2.62, 2.094395102, 2.094395102, 1.57],
     )
-    assert int(values["joint_speed_trip_consecutive_cycles"]) == 2
+    assert int(values["joint_speed_trip_consecutive_cycles"]) == 3
     assert float(values["rotor_torque_slew_nm_per_cycle"]) == 2.0 / 256.0
     assert float(values["rotor_feedback_torque_trip_nm"]) == 3.0
     assert values["expected_board_boot_id"] == mapping_raw["calibration"][

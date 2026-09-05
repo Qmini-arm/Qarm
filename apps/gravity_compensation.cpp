@@ -286,10 +286,10 @@ ControllerConfig loadConfig(const std::string& path) {
         config.rotor_torque_caps_nm[index] <= 0.0 ||
         config.rotor_torque_caps_nm[index] > 2.0 ||
         config.joint_speed_trip_rad_s[index] <= 0.0 ||
-        config.joint_speed_trip_rad_s[index] > 1.5 ||
+        config.joint_speed_trip_rad_s[index] > 3.0 ||
         config.joint_speed_hard_trip_rad_s[index] <=
             config.joint_speed_trip_rad_s[index] ||
-        config.joint_speed_hard_trip_rad_s[index] > 2.0) {
+        config.joint_speed_hard_trip_rad_s[index] > 6.0) {
       throw std::runtime_error(
           "invalid per-joint limit, torque cap, or speed trip");
     }

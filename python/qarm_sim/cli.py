@@ -45,14 +45,14 @@ def _parser() -> argparse.ArgumentParser:
 
     fk = commands.add_parser("fk", help="compute offline base_link-to-tool0 forward kinematics")
     _motion_model_arguments(fk)
-    fk.add_argument("--q-deg", type=float, nargs=6, required=True)
+    fk.add_argument("--q-deg", type=float, nargs="+", required=True, metavar="DEG")
 
     plan = commands.add_parser(
         "plan", help="plan an offline collision-free trajectory to a Cartesian point"
     )
     _motion_model_arguments(plan)
     plan.add_argument("--target", type=float, nargs=3, required=True, metavar=("X", "Y", "Z"))
-    plan.add_argument("--start-deg", type=float, nargs=6, default=[0.0] * 6)
+    plan.add_argument("--start-deg", type=float, nargs="+", metavar="DEG")
     plan.add_argument("--output", type=Path, help="write the joint trajectory as CSV")
 
     plan_home = commands.add_parser(
@@ -63,7 +63,7 @@ def _parser() -> argparse.ArgumentParser:
     plan_home.add_argument(
         "--start-deg",
         type=float,
-        nargs=6,
+        nargs="+",
         required=True,
         help="explicit current joint state in degrees; no hardware state is read",
     )
@@ -77,7 +77,7 @@ def _parser() -> argparse.ArgumentParser:
     plan_urdf_zero.add_argument(
         "--start-deg",
         type=float,
-        nargs=6,
+        nargs="+",
         required=True,
         help="explicit current joint state in degrees; no hardware state is read",
     )
@@ -101,7 +101,7 @@ def _parser() -> argparse.ArgumentParser:
     viewer.add_argument("--duration", type=float, default=0.0)
     viewer_pose = viewer.add_mutually_exclusive_group()
     viewer_pose.add_argument("--calibration-pose", action="store_true")
-    viewer_pose.add_argument("--joint-position", type=float, nargs=6)
+    viewer_pose.add_argument("--joint-position", type=float, nargs="+", metavar="RAD")
     render = commands.add_parser("render", help="render the CAD zero pose to PNG")
     render.add_argument("--output", type=Path, default=Path("build/qarm-zero.png"))
     render.add_argument("--width", type=int, default=960)
@@ -111,8 +111,8 @@ def _parser() -> argparse.ArgumentParser:
     render_pose.add_argument(
         "--joint-position",
         type=float,
-        nargs=6,
-        metavar=("J1", "J2", "J3", "J4", "J5", "J6"),
+        nargs="+",
+        metavar="RAD",
     )
 
     inspect = commands.add_parser(
@@ -132,8 +132,7 @@ def _parser() -> argparse.ArgumentParser:
         "--confirm-table-supported-pose",
         action="store_true",
         help=(
-            "confirm the arm is in the accepted STL-derived pose, including "
-            "motor ID 5 clockwise at its mechanical limit"
+            "confirm the four-axis arm is in the STL-derived table-supported pose"
         ),
     )
 
@@ -176,9 +175,11 @@ def _telemetry_arguments(parser: argparse.ArgumentParser) -> None:
 
 def _remote_command(args: argparse.Namespace) -> list[str]:
     acknowledge = " --acknowledge-state-change" if args.acknowledge_supported_arm else ""
+    mapping = JointMap.load(args.joint_map)
+    motor_ids = ",".join(str(int(value)) for value in mapping.motor_ids_by_joint)
     command = (
         f"{shlex.quote(args.remote_reader)} --device {shlex.quote(args.device)} "
-        "--ids 0,1,2,3,4,5 --mode brake --rate 100"
+        f"--ids {motor_ids} --mode brake --rate 100"
         f"{acknowledge}"
     )
     return [
@@ -299,8 +300,17 @@ def _offline_result(**values: object) -> dict[str, object]:
     }
 
 
+def _start_position(args: argparse.Namespace, dof: int) -> np.ndarray:
+    values = [0.0] * dof if args.start_deg is None else args.start_deg
+    if len(values) != dof:
+        raise ValueError(f"--start-deg requires {dof} joint angles")
+    return np.radians(np.asarray(values, dtype=np.float64))
+
+
 def command_fk(args: argparse.Namespace) -> int:
     motion = OfflineMotion.load(args.urdf)
+    if len(args.q_deg) != motion.model.dof:
+        raise ValueError(f"--q-deg requires {motion.model.dof} joint angles")
     position = np.radians(np.asarray(args.q_deg, dtype=np.float64))
     if not motion.model.within_limits(position):
         raise ValueError("joint vector violates the URDF soft limits")
@@ -343,7 +353,7 @@ def _trajectory_summary(
 
 def command_plan(args: argparse.Namespace) -> int:
     motion = OfflineMotion.load(args.urdf)
-    start = np.radians(np.asarray(args.start_deg, dtype=np.float64))
+    start = _start_position(args, motion.model.dof)
     target = np.asarray(args.target, dtype=np.float64)
     plan = motion.planner.plan(start, target)
     result = _offline_result(
@@ -375,12 +385,11 @@ def _command_plan_home(args: argparse.Namespace, *, calibration_pose: bool) -> i
             control_period_s=HOME_CONTROL_PERIOD_S,
         ),
     )
-    start = np.radians(np.asarray(args.start_deg, dtype=np.float64))
+    start = _start_position(args, motion.model.dof)
     mapping = JointMap.load()
+    scene = build_scene(xacro_path=args.urdf, mapping=mapping)
     if calibration_pose:
-        if not mapping.zero_calibrated or mapping.calibration_reference_joint_rad is None:
-            raise ValueError("calibration reference pose is unavailable; capture zero first")
-        goal = mapping.calibration_reference_joint_rad
+        goal = solve_table_supported_pose(scene).joint_position_rad
         plan = motion.planner.plan_calibration_pose(start, goal)
     else:
         goal = np.zeros(motion.model.dof, dtype=np.float64)
@@ -392,7 +401,7 @@ def _command_plan_home(args: argparse.Namespace, *, calibration_pose: bool) -> i
         end_hold_s=HOME_END_HOLD_S,
     )
     simulation = simulate_home_trajectory(
-        build_scene(mapping=mapping),
+        scene,
         trajectory,
         directions=mapping.direction,
         goal_position_rad=goal,
@@ -480,16 +489,16 @@ def command_solve_calibration_pose() -> int:
     print(
         json.dumps(
             {
-                "name": "table_supported_stl_v1",
+                "name": "table_supported_4dof_stl_v1",
                 "joint_position_rad": solution.joint_position_rad.tolist(),
                 "joint_position_deg": solution.joint_position_deg.tolist(),
-                "motor_ids_by_joint": [0, 1, 2, 3, 4, 5],
+                "motor_ids_by_joint": JointMap.load().motor_ids_by_joint.tolist(),
                 "table_z_m": solution.table_z_m,
                 "arm_link_gap_m": solution.arm_link_gap_m,
                 "motor_3_gap_m": solution.motor_3_gap_m,
-                "motor_4_face_horizontal_error_deg": (solution.motor_4_axis_vertical_error_deg),
-                "motor_5_table_clearance_m": (solution.motor_5_table_clearance_m),
-                "motor_5_reference": ("clockwise mechanical limit = joint_6 lower limit"),
+                "tool_axis_vertical_error_deg": solution.tool_axis_vertical_error_deg,
+                "tool_mount_table_clearance_m": solution.tool_mount_table_clearance_m,
+                "tool_reference": "tool0 Z axis downward; verify the bracket pose manually",
                 "manual_calibration_only": True,
             },
             indent=2,
@@ -503,7 +512,7 @@ def command_render(args: argparse.Namespace) -> int:
     position = (
         solve_table_supported_pose(scene).joint_position_rad
         if args.calibration_pose
-        else np.asarray(args.joint_position or [0.0] * 6, dtype=np.float64)
+        else np.asarray(args.joint_position or [0.0] * len(scene.joint_names), dtype=np.float64)
     )
     set_mirrored_state(scene, position)
     args.output.parent.mkdir(parents=True, exist_ok=True)
@@ -522,7 +531,7 @@ def command_viewer(args: argparse.Namespace) -> int:
     position = (
         solve_table_supported_pose(scene).joint_position_rad
         if args.calibration_pose
-        else np.asarray(args.joint_position or [0.0] * 6, dtype=np.float64)
+        else np.asarray(args.joint_position or [0.0] * len(scene.joint_names), dtype=np.float64)
     )
     set_mirrored_state(scene, position)
     started = time.monotonic()
@@ -567,7 +576,7 @@ def command_capture_zero(args: argparse.Namespace) -> int:
     if not args.confirm_table_supported_pose:
         raise ValueError(
             "refusing to capture: place the arm in the accepted table-supported "
-            "pose, turn motor ID 5 clockwise to its mechanical limit, and pass "
+            "pose and pass "
             "--confirm-table-supported-pose"
         )
     if not args.acknowledge_supported_arm:
@@ -579,7 +588,7 @@ def command_capture_zero(args: argparse.Namespace) -> int:
         raise ValueError("--samples must be within 20..5000")
     mapping = JointMap.load(args.joint_map)
     motor = MotorParameters.load()
-    reference = solve_table_supported_pose().joint_position_rad
+    reference = solve_table_supported_pose(build_scene(mapping=mapping)).joint_position_rad
     board_boot_id = _remote_boot_id(args.ssh_target)
     samples = []
     with SubprocessTelemetry(_remote_command(args), record_path=args.record) as telemetry:

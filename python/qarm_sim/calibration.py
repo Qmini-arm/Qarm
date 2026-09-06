@@ -70,7 +70,7 @@ def estimate_zero(
         else np.asarray(reference_joint_rad, dtype=np.float64)
     )
     if reference.shape != (len(mapping.joint_names),):
-        raise ValueError("reference_joint_rad must contain six values")
+        raise ValueError(f"reference_joint_rad must contain {len(mapping.joint_names)} values")
     if not np.isfinite(reference).all():
         raise ValueError("reference_joint_rad must be finite")
     if not np.isfinite(gear_ratio) or gear_ratio <= 0:

@@ -40,9 +40,9 @@ constexpr double kStartAlignmentS = 1.0;
 constexpr std::size_t kFocTransitionCycles = 3;
 constexpr double kFocTransitionPositionStepTripRad = 0.01;
 const JointVector kReturnSpeedSoftTripRadS = {
-    0.50, 0.50, 0.50, 0.70, 1.00, 1.50};
+    0.50, 0.50, 0.50, 0.70};
 const JointVector kReturnSpeedHardTripRadS = {
-    1.00, 1.00, 1.00, 1.40, 2.00, 2.00};
+    1.00, 1.00, 1.00, 1.40};
 constexpr std::size_t kReturnSpeedTripConsecutiveCycles = 2;
 
 volatile std::sig_atomic_t stop_requested = 0;
@@ -73,6 +73,7 @@ std::vector<std::string> split(const std::string& value, char delimiter) {
   std::stringstream stream(value);
   std::string item;
   while (std::getline(stream, item, delimiter)) result.push_back(trim(item));
+  if (!value.empty() && value.back() == delimiter) result.emplace_back();
   return result;
 }
 
@@ -103,14 +104,14 @@ int parseInt(const std::string& name, const std::string& value) {
 }
 
 template <typename T, typename Parser>
-std::array<T, 6> parseArray(const std::string& name,
-                            const std::string& value,
-                            Parser parser) {
+qmini_arm::JointArray<T> parseArray(const std::string& name,
+                                  const std::string& value,
+                                  Parser parser) {
   const std::vector<std::string> items = split(value, ',');
-  if (items.size() != 6) {
-    throw std::runtime_error(name + " must contain exactly six values");
+  if (items.size() != qmini_arm::kJointCount) {
+    throw std::runtime_error(name + " must contain exactly four values");
   }
-  std::array<T, 6> result{};
+  qmini_arm::JointArray<T> result{};
   for (std::size_t index = 0; index < result.size(); ++index) {
     result[index] = parser(name, items[index]);
   }
@@ -136,7 +137,8 @@ std::map<std::string, std::string> readKeyValues(const std::string& path) {
     }
     const std::string key = trim(line.substr(0, equals));
     const std::string value = trim(line.substr(equals + 1));
-    if (key.empty() || value.empty() || result.count(key)) {
+    if (key.empty() ||
+        (value.empty() && key != "expected_board_boot_id") || result.count(key)) {
       throw std::runtime_error("invalid or duplicate config key at line " +
                                std::to_string(line_number));
     }
@@ -155,9 +157,10 @@ std::string required(const std::map<std::string, std::string>& values,
 struct HomeConfig {
   std::string device;
   std::string expected_board_boot_id;
+  bool calibration_confirmed = false;
   double gear_ratio = 0.0;
-  std::array<int, 6> motor_ids{};
-  std::array<int, 6> directions{};
+  qmini_arm::JointArray<int> motor_ids{};
+  qmini_arm::JointArray<int> directions{};
   JointVector rotor_at_reference_rad{};
   JointVector reference_joint_rad{};
   JointVector soft_lower_rad{};
@@ -178,12 +181,21 @@ struct HomeConfig {
 
 HomeConfig loadConfig(const std::string& path) {
   const auto values = readKeyValues(path);
-  if (parseInt("schema_version", required(values, "schema_version")) != 2) {
-    throw std::runtime_error("return-to-zero requires gravity config schema 2");
+  if (parseInt("schema_version", required(values, "schema_version")) != 3) {
+    throw std::runtime_error(
+        "four-joint return-to-zero requires gravity config schema 3");
   }
   HomeConfig config;
   config.device = required(values, "device");
   config.expected_board_boot_id = required(values, "expected_board_boot_id");
+  const std::string confirmed = required(values, "calibration_confirmed");
+  if (confirmed != "true" && confirmed != "false") {
+    throw std::runtime_error("calibration_confirmed must be true or false");
+  }
+  config.calibration_confirmed = confirmed == "true";
+  if (config.calibration_confirmed && config.expected_board_boot_id.empty()) {
+    throw std::runtime_error("confirmed calibration requires a board boot ID");
+  }
   config.gear_ratio = parseDouble("gear_ratio", required(values, "gear_ratio"));
   config.motor_ids = parseArray<int>(
       "motor_ids", required(values, "motor_ids"), parseInt);
@@ -230,7 +242,7 @@ HomeConfig loadConfig(const std::string& path) {
   config.loop_deadline_trip_s = parseDouble(
       "loop_deadline_trip_s", required(values, "loop_deadline_trip_s"));
 
-  if (config.device.empty() || config.expected_board_boot_id.empty() ||
+  if (config.device.empty() ||
       config.gear_ratio <= 0.0 || config.startup_limit_margin_rad <= 0.0 ||
       config.runtime_limit_margin_rad <= 0.0 ||
       config.startup_limit_margin_rad < config.runtime_limit_margin_rad ||
@@ -245,7 +257,7 @@ HomeConfig loadConfig(const std::string& path) {
       config.loop_deadline_trip_s > 0.1) {
     throw std::runtime_error("return-to-zero config violates safety bounds");
   }
-  for (std::size_t index = 0; index < 6; ++index) {
+  for (std::size_t index = 0; index < qmini_arm::kJointCount; ++index) {
     if (config.motor_ids[index] != static_cast<int>(index) ||
         (config.directions[index] != -1 && config.directions[index] != 1) ||
         config.soft_lower_rad[index] >= config.soft_upper_rad[index] ||
@@ -283,7 +295,7 @@ void printUsage(const char* program) {
       << "The CSV must come from qarm-sim plan-home and finish at the desk-supported "
          "calibration pose.\n\n"
       << "Options:\n"
-      << "  --config FILE                     gravity config schema 2\n"
+      << "  --config FILE                     four-joint gravity config schema 3\n"
       << "  --trajectory FILE                 collision-checked joint CSV\n"
       << "  --dry-run                         validate without serial access\n"
       << "  --enable-foc                      execute the bounded trajectory\n"
@@ -347,7 +359,7 @@ std::string readSingleLine(const std::string& path) {
   return trim(value);
 }
 
-JointVector jointPosition(const std::array<qmini_arm::MotorState, 6>& states,
+JointVector jointPosition(const qmini_arm::JointArray<qmini_arm::MotorState>& states,
                           const HomeConfig& config) {
   JointVector result{};
   for (std::size_t index = 0; index < result.size(); ++index) {
@@ -360,7 +372,7 @@ JointVector jointPosition(const std::array<qmini_arm::MotorState, 6>& states,
   return result;
 }
 
-JointVector jointVelocity(const std::array<qmini_arm::MotorState, 6>& states,
+JointVector jointVelocity(const qmini_arm::JointArray<qmini_arm::MotorState>& states,
                           const HomeConfig& config) {
   JointVector result{};
   for (std::size_t index = 0; index < result.size(); ++index) {
@@ -424,9 +436,9 @@ void validatePoseLimits(const JointVector& position,
   }
 }
 
-std::array<qmini_arm::MotorState, 6> readBrake(
+qmini_arm::JointArray<qmini_arm::MotorState> readBrake(
     qmini_arm::MotorBus& bus, const HomeConfig& config) {
-  std::array<qmini_arm::MotorState, 6> result{};
+  qmini_arm::JointArray<qmini_arm::MotorState> result{};
   for (std::size_t index = 0; index < result.size(); ++index) {
     result[index] = bus.readStateBrake(config.motor_ids[index]);
     validateFeedback(result[index], config.motor_ids[index], bus.brakeMode(),
@@ -438,8 +450,10 @@ std::array<qmini_arm::MotorState, 6> readBrake(
 void finalBrake(qmini_arm::MotorBus& bus, const HomeConfig& config) {
   const std::vector<int> ids(config.motor_ids.begin(), config.motor_ids.end());
   const int acknowledgements = bus.sendBrake(ids, 3);
-  std::cerr << "BRAKE acknowledgements=" << acknowledgements << "/18\n";
-  if (acknowledgements != 18) {
+  const int expected = static_cast<int>(ids.size()) * 3;
+  std::cerr << "BRAKE acknowledgements=" << acknowledgements << '/'
+            << expected << '\n';
+  if (acknowledgements != expected) {
     std::cerr << "WARNING: BRAKE was not confirmed by every motor; use the "
                  "physical power cutoff.\n";
   }
@@ -465,7 +479,7 @@ void validateTrajectory(const qmini_arm::JointTrajectory& trajectory,
       kMaximumPlanDurationS, kPlanFinalToleranceRad);
   for (const auto& sample : trajectory) {
     if (sample.time_s > kStartAlignmentS + 1e-9) break;
-    for (std::size_t index = 0; index < 6; ++index) {
+    for (std::size_t index = 0; index < qmini_arm::kJointCount; ++index) {
       if (std::abs(sample.position_rad[index] -
                    trajectory.front().position_rad[index]) > 1e-6 ||
           std::abs(sample.velocity_rad_s[index]) > 1e-8) {
@@ -490,6 +504,11 @@ void dryRun(const qmini_arm::JointTrajectory& trajectory) {
 int runHardware(const HomeConfig& config,
                 const qmini_arm::JointTrajectory& trajectory,
                 const Options& options) {
+  if (!config.calibration_confirmed) {
+    throw std::runtime_error(
+        "four-joint calibration is unconfirmed; recapture calibration before "
+        "using hardware modes");
+  }
   if (!options.acknowledge_supported_arm ||
       !options.acknowledge_estop_ready ||
       !options.confirm_same_motor_power_cycle ||
@@ -518,7 +537,7 @@ int runHardware(const HomeConfig& config,
     qmini_arm::PerJointSpeedGuard transition_speed_guard(
         kReturnSpeedSoftTripRadS, config.joint_speed_hard_trip_rad_s,
         kReturnSpeedTripConsecutiveCycles);
-    std::array<qmini_arm::MotorState, 6> states{};
+    qmini_arm::JointArray<qmini_arm::MotorState> states{};
     JointVector actual_position{};
     JointVector actual_velocity{};
     for (int sample = 0; sample < 5; ++sample) {
@@ -531,7 +550,7 @@ int runHardware(const HomeConfig& config,
       std::this_thread::sleep_for(std::chrono::milliseconds(20));
     }
     speed_guard.reset();
-    for (std::size_t index = 0; index < 6; ++index) {
+    for (std::size_t index = 0; index < qmini_arm::kJointCount; ++index) {
       if (std::abs(actual_position[index] -
                    trajectory.front().position_rad[index]) >
           kMeasuredStartToleranceRad) {
@@ -609,7 +628,7 @@ int runHardware(const HomeConfig& config,
         const double blend = u * u * (3.0 - 2.0 * u);
         const double blend_rate =
             6.0 * u * (1.0 - u) / kStartAlignmentS;
-        for (std::size_t index = 0; index < 6; ++index) {
+        for (std::size_t index = 0; index < qmini_arm::kJointCount; ++index) {
           const double delta = trajectory.front().position_rad[index] -
                                measured_start_position[index];
           command_position[index] =
@@ -627,8 +646,8 @@ int runHardware(const HomeConfig& config,
           requested_rotor_torque, previous_rotor_torque,
           config.rotor_torque_caps_nm,
           config.rotor_torque_slew_nm_per_cycle, &saturated);
-      std::array<qmini_arm::MotorState, 6> next{};
-      for (std::size_t index = 0; index < 6; ++index) {
+      qmini_arm::JointArray<qmini_arm::MotorState> next{};
+      for (std::size_t index = 0; index < qmini_arm::kJointCount; ++index) {
         if (stop_requested) break;
         if (std::chrono::duration<double>(Clock::now() - deadline).count() >
             config.loop_deadline_trip_s) {
@@ -665,7 +684,7 @@ int runHardware(const HomeConfig& config,
       states = next;
       previous_rotor_torque = rotor_torque;
       const JointVector measured = jointPosition(states, config);
-      for (std::size_t index = 0; index < 6; ++index) {
+      for (std::size_t index = 0; index < qmini_arm::kJointCount; ++index) {
         if (cycle < kFocTransitionCycles &&
             std::abs(measured[index] - actual_position[index]) >
                 kFocTransitionPositionStepTripRad) {
@@ -705,7 +724,7 @@ int runHardware(const HomeConfig& config,
     bool reached_reference = !stop_requested;
     if (reached_reference) {
       actual_position = jointPosition(states, config);
-      for (std::size_t index = 0; index < 6; ++index) {
+      for (std::size_t index = 0; index < qmini_arm::kJointCount; ++index) {
         reached_reference = reached_reference &&
                        std::abs(actual_position[index] -
                                 config.reference_joint_rad[index]) <=

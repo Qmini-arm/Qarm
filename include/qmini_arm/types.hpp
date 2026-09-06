@@ -1,9 +1,18 @@
 #ifndef QMINI_ARM_TYPES_HPP_
 #define QMINI_ARM_TYPES_HPP_
 
+#include <array>
+#include <cstddef>
 #include <limits>
 
 namespace qmini_arm {
+
+constexpr std::size_t kJointCount = 4;
+
+template <typename T>
+using JointArray = std::array<T, kJointCount>;
+
+using JointVector = JointArray<double>;
 
 // Values accepted by the Unitree FOC force/position hybrid controller.
 // They are all rotor-side quantities; no gear-ratio conversion is implicit.
@@ -54,4 +63,3 @@ struct JointState {
 }  // namespace qmini_arm
 
 #endif  // QMINI_ARM_TYPES_HPP_
-

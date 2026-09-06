@@ -22,9 +22,8 @@ class HomeSimulationConfig:
         2.00,
         0.90,
         0.08,
-        0.03,
-        0.03,
     )
+    joint_speed_limits_rad_s: tuple[float, ...] = (0.50, 0.50, 0.50, 0.70)
     rotor_torque_slew_nm_per_cycle: float = 2.0 / 256.0
     torque_quantization_nm: float = 1.0 / 256.0
     start_alignment_s: float = 1.0
@@ -52,6 +51,7 @@ class HomeSimulationResult:
     finite: bool
     assumed_joint_armature_kg_m2: float
     hard_limit_tolerance_rad: float
+    joint_speed_limits_rad_s: NDArray[np.float64]
 
     @property
     def passed(self) -> bool:
@@ -62,7 +62,7 @@ class HomeSimulationResult:
             and np.max(np.abs(self.final_error_rad)) <= 0.04
             and np.all(
                 self.maximum_speed_rad_s
-                <= np.asarray([0.50, 0.50, 0.50, 0.70, 1.00, 1.50])
+                <= self.joint_speed_limits_rad_s
             )
             and np.max(self.maximum_tracking_error_rad) <= 0.20
             and self.torque_saturation_steps == 0
@@ -170,6 +170,22 @@ def simulate_home_trajectory(
     """
 
     settings = config or HomeSimulationConfig()
+    dof = len(scene.joint_names)
+    expected_shape = (len(trajectory.times_s), dof)
+    if (
+        trajectory.positions_rad.shape != expected_shape
+        or trajectory.velocities_rad_s.shape != expected_shape
+    ):
+        raise ValueError(f"trajectory positions and velocities must have shape {expected_shape}")
+    if not all(
+        np.all(np.isfinite(values))
+        for values in (
+            trajectory.times_s,
+            trajectory.positions_rad,
+            trajectory.velocities_rad_s,
+        )
+    ):
+        raise ValueError("trajectory must contain only finite values")
     if settings.assumed_joint_armature_kg_m2 <= 0.0:
         raise ValueError("a positive assumed joint armature is required")
     if settings.hard_limit_tolerance_rad < 0.0:
@@ -180,21 +196,28 @@ def simulate_home_trajectory(
         settings.assumed_joint_armature_kg_m2
     )
     direction = (
-        np.ones(6, dtype=np.float64)
+        np.ones(dof, dtype=np.float64)
         if directions is None
-        else np.asarray(directions, dtype=np.float64).reshape(6)
+        else np.asarray(directions, dtype=np.float64).reshape(dof)
     )
     if np.any(np.abs(direction) != 1.0):
         raise ValueError("directions must contain only +1 or -1")
     caps = np.asarray(settings.rotor_torque_caps_nm, dtype=np.float64)
-    if caps.shape != (6,) or np.any(caps <= 0.0):
-        raise ValueError("six positive rotor torque caps are required")
+    if caps.shape != (dof,) or not np.all(np.isfinite(caps)) or np.any(caps <= 0.0):
+        raise ValueError(f"{dof} positive finite rotor torque caps are required")
+    speed_limits = np.asarray(settings.joint_speed_limits_rad_s, dtype=np.float64)
+    if (
+        speed_limits.shape != (dof,)
+        or not np.all(np.isfinite(speed_limits))
+        or np.any(speed_limits <= 0.0)
+    ):
+        raise ValueError(f"{dof} positive finite joint speed limits are required")
     if len(trajectory.times_s) < 2:
         raise ValueError("simulation requires at least two trajectory samples")
     goal = (
         trajectory.positions_rad[-1]
         if goal_position_rad is None
-        else np.asarray(goal_position_rad, dtype=np.float64).reshape(6)
+        else np.asarray(goal_position_rad, dtype=np.float64).reshape(dof)
     )
     if not np.all(np.isfinite(goal)):
         raise ValueError("goal position must be finite")
@@ -206,20 +229,20 @@ def simulate_home_trajectory(
     initial_position = (
         trajectory.positions_rad[0]
         if initial_position_rad is None
-        else np.asarray(initial_position_rad, dtype=np.float64).reshape(6)
+        else np.asarray(initial_position_rad, dtype=np.float64).reshape(dof)
     )
     if not np.all(np.isfinite(initial_position)):
         raise ValueError("initial position must be finite")
-    set_mirrored_state(scene, initial_position, np.zeros(6))
+    set_mirrored_state(scene, initial_position, np.zeros(dof))
     # The scene model has real link inertia from URDF and explicit armature
     # only for this conservative simulation scenario. Make the initial state
     # authoritative after changing model parameters.
     mujoco.mj_forward(scene.model, scene.data)
     gravity_data = mujoco.MjData(scene.model)
-    previous_feedforward = np.zeros(6, dtype=np.float64)
-    maximum_tracking_error = np.zeros(6, dtype=np.float64)
-    maximum_speed = np.zeros(6, dtype=np.float64)
-    maximum_torque = np.zeros(6, dtype=np.float64)
+    previous_feedforward = np.zeros(dof, dtype=np.float64)
+    maximum_tracking_error = np.zeros(dof, dtype=np.float64)
+    maximum_speed = np.zeros(dof, dtype=np.float64)
+    maximum_torque = np.zeros(dof, dtype=np.float64)
     torque_saturation_steps = 0
     feedforward_slew_steps = 0
     hard_limit_violations = 0
@@ -232,8 +255,8 @@ def simulate_home_trajectory(
     next_control_s = 0.0
     end_time_s = float(trajectory.times_s[-1])
     target_position = initial_position.copy()
-    target_velocity = np.zeros(6, dtype=np.float64)
-    feedforward = np.zeros(6, dtype=np.float64)
+    target_velocity = np.zeros(dof, dtype=np.float64)
+    feedforward = np.zeros(dof, dtype=np.float64)
     first_control = True
 
     while scene.data.time < end_time_s - 0.5 * scene.model.opt.timestep:
@@ -379,4 +402,5 @@ def simulate_home_trajectory(
             settings.assumed_joint_armature_kg_m2
         ),
         hard_limit_tolerance_rad=settings.hard_limit_tolerance_rad,
+        joint_speed_limits_rad_s=speed_limits.copy(),
     )

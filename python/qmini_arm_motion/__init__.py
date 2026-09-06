@@ -1,4 +1,4 @@
-"""Qmini six-axis motion planning.
+"""Qmini URDF-driven motion planning.
 
 The public seam is intentionally small: :class:`ArmModel` owns URDF
 kinematics, :class:`MotionPlanner` owns collision-aware target planning, and

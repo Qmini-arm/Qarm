@@ -124,12 +124,10 @@ void testGravityModelMatchesMujoco() {
   qmini_arm::GravityModel model;
   const qmini_arm::JointVector zero{};
   const qmini_arm::JointVector expected_zero = {
-      0.000379408546167553,
-      0.4622329897782038,
-      -0.45724924222659047,
-      0.4527995154873221,
-      -0.008266270739277437,
-      0.0028573351199981476,
+      4.5928346755190465e-06,
+      0.004264811655807764,
+      -0.0018557320580040717,
+      3.3051717945577086e-06,
   };
   const auto actual_zero = model.compensationTorque(zero);
   for (std::size_t index = 0; index < actual_zero.size(); ++index) {
@@ -137,32 +135,43 @@ void testGravityModelMatchesMujoco() {
             "zero-pose gravity torque disagrees with MuJoCo");
   }
 
-  const qmini_arm::JointVector pose = {0.2, -0.1, 0.3, 0.05, -0.2, 0.1};
+  const qmini_arm::JointVector pose = {0.2, -0.1, 0.3, 0.05};
   const qmini_arm::JointVector expected = {
-      0.002601902121703785,
-      3.1270456019390407,
-      -2.415411918094685,
-      0.42586188478903986,
-      -0.007495958065603048,
-      0.0027133658205243175,
+      0.0008439168539749143,
+      1.0646758038588573,
+      -0.6884093329382603,
+      0.0009824622690346868,
   };
   const auto actual = model.compensationTorque(pose);
   for (std::size_t index = 0; index < actual.size(); ++index) {
     require(near(actual[index], expected[index], 1e-5),
             "gravity torque disagrees with MuJoCo");
   }
+
+  const qmini_arm::JointVector folded_pose = {-0.8, 0.4, -1.2, 0.9};
+  const qmini_arm::JointVector expected_folded = {
+      -0.0018591964794433572,
+      -3.2190289941039225,
+      1.762587745421884,
+      -0.0017140100715784048,
+  };
+  const auto actual_folded = model.compensationTorque(folded_pose);
+  for (std::size_t index = 0; index < actual_folded.size(); ++index) {
+    require(near(actual_folded[index], expected_folded[index], 1e-5),
+            "folded-pose gravity torque disagrees with MuJoCo");
+  }
 }
 
 void testGuardedGravityCommandShaping() {
-  const qmini_arm::JointVector joint = {6.33, -6.33, 0.0, 3.165, 1.0, -1.0};
-  const std::array<int, 6> directions = {1, -1, 1, 1, -1, -1};
+  const qmini_arm::JointVector joint = {6.33, -6.33, 0.0, 3.165};
+  const qmini_arm::JointArray<int> directions = {1, -1, 1, 1};
   const auto rotor =
       qmini_arm::jointGravityToRotorTorque(joint, 1.0, directions, 6.33);
   require(near(rotor[0], 1.0), "100% gravity torque conversion failed");
   require(near(rotor[1], 1.0), "direction torque conversion failed");
 
   const qmini_arm::JointVector previous{};
-  const qmini_arm::JointVector caps = {0.1, 0.1, 0.1, 0.1, 0.1, 0.1};
+  const qmini_arm::JointVector caps = {0.1, 0.1, 0.1, 0.1};
   bool saturated = false;
   const auto limited =
       qmini_arm::limitRotorTorque(rotor, previous, caps, 0.01, &saturated);
@@ -182,8 +191,8 @@ void testGuardedGravityCommandShaping() {
 }
 
 void testPerJointSpeedGuard() {
-  const qmini_arm::JointVector soft = {0.5, 0.5, 0.5, 0.7, 1.0, 1.5};
-  const qmini_arm::JointVector hard = {1.0, 1.0, 1.0, 1.4, 2.0, 2.0};
+  const qmini_arm::JointVector soft = {0.5, 0.5, 0.5, 0.7};
+  const qmini_arm::JointVector hard = {1.0, 1.0, 1.0, 1.4};
   qmini_arm::PerJointSpeedGuard guard(soft, hard, 2);
   qmini_arm::JointVector velocity{};
 
@@ -202,23 +211,21 @@ void testPerJointSpeedGuard() {
 
   guard.reset();
   velocity = {};
-  velocity[5] = 2.1;
+  velocity.back() = 1.5;
   requireThrows([&]() { guard.observeFrame(velocity); },
                 "single-frame hard speed trip was not enforced");
-  requireThrows([&]() { guard.enforceHardTrip(6, 0.0); },
+  requireThrows([&]() { guard.enforceHardTrip(qmini_arm::kJointCount, 0.0); },
                 "invalid joint speed index was accepted");
 }
 
 std::string zeroHomeCsv() {
   return
       "time_s,joint_1_position_rad,joint_2_position_rad,"
-      "joint_3_position_rad,joint_4_position_rad,joint_5_position_rad,"
-      "joint_6_position_rad,joint_1_velocity_rad_s,"
+      "joint_3_position_rad,joint_4_position_rad,joint_1_velocity_rad_s,"
       "joint_2_velocity_rad_s,joint_3_velocity_rad_s,"
-      "joint_4_velocity_rad_s,joint_5_velocity_rad_s,"
-      "joint_6_velocity_rad_s\n"
-      "0,0,0,0,0,0,0,0,0,0,0,0,0\n"
-      "0.02,0,0,0,0,0,0,0,0,0,0,0,0\n";
+      "joint_4_velocity_rad_s\n"
+      "0,0,0,0,0,0,0,0,0\n"
+      "0.02,0,0,0,0,0,0,0,0\n";
 }
 
 void testHomeTrajectoryContract() {
@@ -226,16 +233,16 @@ void testHomeTrajectoryContract() {
   const qmini_arm::JointTrajectory trajectory =
       qmini_arm::parseJointTrajectoryCsv(valid_stream);
   require(trajectory.size() == 2, "home trajectory CSV row count failed");
-  const qmini_arm::JointVector lower = {-1, -1, -1, -1, -1, -1};
-  const qmini_arm::JointVector upper = {1, 1, 1, 1, 1, 1};
+  const qmini_arm::JointVector lower = {-1, -1, -1, -1};
+  const qmini_arm::JointVector upper = {1, 1, 1, 1};
   const qmini_arm::JointVector goal{};
   qmini_arm::validateHomeTrajectory(
       trajectory, lower, upper, lower, upper, goal, false, 0.02, 0.3, 0.6,
       0.05, 120.0, 1e-4);
 
-  const qmini_arm::JointVector hard_lower = {-2, -2, -2, -2, -2, -2};
-  const qmini_arm::JointVector hard_upper = {2, 2, 2, 2, 2, 2};
-  const qmini_arm::JointVector hard_goal = {0, 1.8, 0, 0, 0, -1.8};
+  const qmini_arm::JointVector hard_lower = {-2, -2, -2, -2};
+  const qmini_arm::JointVector hard_upper = {2, 2, 2, 2};
+  const qmini_arm::JointVector hard_goal = {0, 1.8, 0, -1.8};
   qmini_arm::JointTrajectory calibration = trajectory;
   calibration[0].position_rad = hard_goal;
   calibration[1].position_rad = hard_goal;
@@ -259,6 +266,31 @@ void testHomeTrajectoryContract() {
         (void)qmini_arm::parseJointTrajectoryCsv(invalid_header);
       },
       "invalid home trajectory header was accepted");
+
+  std::ostringstream legacy_csv;
+  legacy_csv << "time_s";
+  for (int joint = 1; joint <= 6; ++joint) {
+    legacy_csv << ",joint_" << joint << "_position_rad";
+  }
+  for (int joint = 1; joint <= 6; ++joint) {
+    legacy_csv << ",joint_" << joint << "_velocity_rad_s";
+  }
+  legacy_csv << '\n';
+  std::istringstream legacy_stream(legacy_csv.str());
+  requireThrows(
+      [&]() { (void)qmini_arm::parseJointTrajectoryCsv(legacy_stream); },
+      "legacy six-joint trajectory was accepted");
+
+  const std::string header = zeroHomeCsv().substr(0, zeroHomeCsv().find('\n'));
+  std::istringstream extra_values(header + "\n0,0,0,0,0,0,0,0,0,0,0,0,0\n");
+  requireThrows(
+      [&]() { (void)qmini_arm::parseJointTrajectoryCsv(extra_values); },
+      "six-joint trajectory row under a four-joint header was accepted");
+
+  std::istringstream trailing_value(header + "\n0,0,0,0,0,0,0,0,0,\n");
+  requireThrows(
+      [&]() { (void)qmini_arm::parseJointTrajectoryCsv(trailing_value); },
+      "trajectory with an extra empty column was accepted");
 }
 
 }  // namespace

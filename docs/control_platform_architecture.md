@@ -1,6 +1,11 @@
 # Qarm 控制平台架构
 
-这份文档定义网页平台、仿真和真实 M8010 控制器之间的接口边界。它把机器人控制平台说明文档中的功能映射到 Qarm 已有的 C++ 和 Python 模块，同时保留机械臂特有的标定、回零和安全语义。
+这份文档定义网页平台、仿真和真实 M8010 控制器之间的目标接口边界。
+下文 ArmBackend、WebSocket 和 `/api/v1/*` 是后续设计，当前实现使用
+`platform/server/qarm_control_server.py` 的 `/api/*` REST 和轮询式四轴状态。
+当前仿真是控制状态模拟，MuJoCo 动力学验证通过 `qarm-sim` 独立运行；
+硬件 MOVEJ、使能和重力模式尚未接入网页执行器，后端明确拒绝，前端显示真实错误。
+当前接口和启动方式见 [平台说明](../platform/README.md)。
 
 ## 运行时边界
 
@@ -31,7 +36,7 @@ Ready → GravityHold → Executing → Ready
   └──────────────→ EStop/Fault ──(人工复位)──→ ConnectedReadOnly
 ```
 
-状态转换必须是单向、可审计的事件。`Ready` 的前提是六轴反馈有效、会话标定 ID 匹配、
+状态转换必须是单向、可审计的事件。`Ready` 的前提是四轴反馈有效、会话标定 ID 匹配、
 当前姿态在有效限位内。`GravityHold` 使用重力前馈和速度阻尼；它不设置位置目标。
 `Executing` 执行已经过限位、自碰撞、速度、加速度和起点匹配检查的完整轨迹。
 任何通信、温度、错误码、看门狗或急停故障都进入 `Fault`，并在退出路径尝试发送
@@ -41,7 +46,7 @@ BRAKE；BRAKE 不是机械安全抱闸，外部支撑仍是必要条件。
 
 ```cpp
 struct ArmSnapshot { State state; uint64_t sequence; Timestamp stamp;
-  std::array<JointState, 6> joints; std::array<MotorCommand, 6> command;
+  JointArray<JointState> joints; JointArray<MotorCommand> command;
   std::string calibration_id; Fault fault; };
 
 class ArmController {
@@ -80,14 +85,14 @@ Python 侧建议拆成 `python/qarm_server/{app.py,schemas.py,backends.py,events
 WebSocket 消息分为 `snapshot`、`command`、`fault`、`transition`、`audit` 五类，必须
 带单调 `sequence` 和控制器时间戳，前端发现跳号时显示数据不连续。
 
-快照至少包含：状态机状态、连接/使能/急停、六轴 `q/dq/tau/temp/error/mode`、
+快照至少包含：状态机状态、连接/使能/急停、四轴 `q/dq/tau/temp/error/mode`、
 当前目标 `q_des/dq_des/tau_ff/kp/kd`、跟踪误差、重力比例、计划 ID、标定 ID、
 最后一次故障和总线延迟。UI 应分别显示目标、反馈和误差，不能把计划值伪装成实测值。
 
 ## 平台功能分区
 
 - 控制：关节 MOVEJ、末端位置规划、复制当前姿态、回到桌面支撑标定位；规划结果先在 Viser/MuJoCo 预览，再显式执行。
-- 状态：六轴反馈、温度/错误码/通信新鲜度、跟踪误差、状态机和事件日志。
+- 状态：四轴反馈、温度/错误码/通信新鲜度、跟踪误差、状态机和事件日志。
 - 配置：工具坐标系（位姿、重量、重心）、有效软限位、控制器地址和模型/标定版本。配置写入临时版本，校验通过后原子替换。
 - 在线编程：版本化 JSON AST，节点包括 `start/end/movej/movel/wait/set/if/loop/popup`；保存、校验、单步和运行都由后端执行器完成，不能让浏览器直接拼接串口命令。
 - 可视化：Viser 展示 URDF/MuJoCo 当前姿态、目标、规划路径和桌面支撑平面；实机模式叠加实际反馈，断线时冻结并标记时间戳。
@@ -95,6 +100,6 @@ WebSocket 消息分为 `snapshot`、`command`、`fault`、`transition`、`audit`
 ## 优先级
 
 1. 先冻结 REST/WS schema，实现 MujocoBackend + FakeHardwareBackend 和状态机测试。
-2. 再实现 C++ `ArmController`、六轴聚合反馈和轨迹执行 adapter。
+2. 再实现 C++ `ArmController`、四轴聚合反馈和轨迹执行 adapter。
 3. 将 Viser 和 React UI 改为消费真实 schema，移除随机 mock 状态。
 4. 最后加入在线编程持久化、权限、审计导出和控制器升级页面。

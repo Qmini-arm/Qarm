@@ -68,8 +68,10 @@ class M8010CommandMapper:
         if tuple(cal.joint_name for cal in calibrations) != model.joint_names:
             raise ValueError("motor calibration order/names do not match the URDF chain")
         ids = [cal.motor_id for cal in calibrations]
-        if len(ids) != 6 or len(set(ids)) != 6 or any(not 0 <= value <= 14 for value in ids):
-            raise ValueError("exactly six unique motor IDs in [0, 14] are required")
+        if len(ids) != model.dof or len(set(ids)) != model.dof or any(
+            not 0 <= value <= 14 for value in ids
+        ):
+            raise ValueError(f"exactly {model.dof} unique motor IDs in [0, 14] are required")
         if any(cal.direction not in {-1, 1} for cal in calibrations):
             raise ValueError("each motor direction must be +1 or -1")
         if gear_ratio <= 0.0 or kp_rotor < 0.0 or kd_rotor < 0.0:

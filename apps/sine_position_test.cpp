@@ -27,7 +27,7 @@ volatile std::sig_atomic_t g_stop_requested = 0;
 void onSignal(int) { g_stop_requested = 1; }
 
 /*
- * 六电机正弦位置测试原理
+ * 四电机正弦位置测试原理
  * ----------------------
  * Unitree M8010 FOC 控制器内部使用转子侧力位混合控制律：
  *
@@ -40,13 +40,13 @@ void onSignal(int) { g_stop_requested = 1; }
  *   q_des_rotor[i] = q_start_rotor[i]
  *                  + direction*r*q_sine_output(t)
  *
- * 六台电机共用同一个 t 和相对目标，但 M8010 是请求—应答协议，所以每
+ * 四台电机共用同一个 t 和相对目标，但 M8010 是请求—应答协议，所以每
  * 个周期内仍需按 ID 顺序轮询，并不使用无反馈的广播控制。
  */
 
 struct Config {
   std::string port = "/dev/ttyUSB0";
-  std::vector<int> ids = {0, 1, 2, 3, 4, 5};
+  std::vector<int> ids = {0, 1, 2, 3};
   double amplitude_deg = 8.0;
   double center_deg = 0.0;
   double period_s = 4.0;
@@ -91,7 +91,7 @@ void printUsage(const char* program) {
       << "Drive GO-M8010-6 IDs with one relative output-side sine target.\n\n"
       << "Options (defaults shown):\n"
       << "  --port PATH                 /dev/ttyUSB0\n"
-      << "  --ids LIST                  0,1,2,3,4,5\n"
+      << "  --ids LIST                  0,1,2,3\n"
       << "  --id N                      single-motor compatibility option\n"
       << "  --amplitude-deg DEG         8.0\n"
       << "  --center-deg DEG            0.0\n"
@@ -521,4 +521,3 @@ int main(int argc, char** argv) {
     return 1;
   }
 }
-

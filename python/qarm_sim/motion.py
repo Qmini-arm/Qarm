@@ -48,8 +48,12 @@ def write_joint_trajectory_csv(
     output: str | Path,
 ) -> Path:
     """Write an offline joint trajectory, without opening a hardware device."""
-    if trajectory.positions_rad.shape[1] != len(joint_names):
-        raise ValueError("trajectory width does not match joint names")
+    expected_shape = (len(trajectory.times_s), len(joint_names))
+    if (
+        trajectory.positions_rad.shape != expected_shape
+        or trajectory.velocities_rad_s.shape != expected_shape
+    ):
+        raise ValueError(f"trajectory positions and velocities must have shape {expected_shape}")
     destination = Path(output)
     destination.parent.mkdir(parents=True, exist_ok=True)
     position_columns = [f"{name}_position_rad" for name in joint_names]

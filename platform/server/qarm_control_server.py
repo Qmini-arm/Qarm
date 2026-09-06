@@ -9,12 +9,14 @@ motors return ``501`` and the state is not changed.
 
 from __future__ import annotations
 
+import csv
 import json
 import math
 import os
 import subprocess
 import threading
 import time
+import xml.etree.ElementTree as ET
 from collections.abc import Callable
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -27,34 +29,115 @@ READER = os.environ.get("QARM_READER", "/home/HwHiAiUser/.local/libexec/qarm/m80
 RETURN_HOME = os.environ.get("QARM_RETURN_HOME", "/home/HwHiAiUser/.local/bin/qmini-return-home")
 GRAVITY = os.environ.get("QARM_GRAVITY", "/home/HwHiAiUser/.local/bin/qmini-gravity")
 CONFIG = Path(os.environ.get("QARM_CONFIG", str(ROOT / "config" / "joint_map.json")))
-HOME_REFERENCE = [0.0, 1.748017811, 0.154806471, -0.020052336, 0.0, -1.57]
-JOINT_LIMITS = [
-    (-2.967, 2.967),
-    (-1.57, 1.57),
-    (-2.007, 2.007),
-    (-2.0, 2.0),
-    (-2.007, 2.007),
-    (-1.5, 1.5),
-]
+URDF = Path(os.environ.get("QARM_URDF", str(ROOT / "description" / "qmini_arm.urdf")))
+CALIBRATION_POSE = Path(
+    os.environ.get("QARM_CALIBRATION_POSE", str(ROOT / "config" / "calibration_pose.json"))
+)
 DIST = Path(os.environ.get("QARM_PLATFORM_DIST", str(ROOT / "platform" / "dist")))
 
 
-def _default_joints() -> list[dict[str, Any]]:
-    values = [-0.473, 0.883, -1.662, -1.268, -0.020, -0.495]
+def load_model(urdf_path: Path, config_path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Load the active serial chain and its exact hardware mapping."""
+    root = ET.parse(urdf_path).getroot()
+    by_child = {joint.find("child").get("link"): joint for joint in root.findall("joint")}
+    chain = []
+    current = "tool0"
+    while current != "base_link":
+        joint = by_child[current]
+        if joint.get("type") != "fixed":
+            chain.append(joint)
+        current = joint.find("parent").get("link")
+    chain.reverse()
+    mapping = json.loads(config_path.read_text(encoding="utf-8"))
+    names = [joint.get("name") for joint in chain]
+    if mapping.get("joint_names") != names:
+        raise ValueError("joint_map joint_names must exactly match the active URDF chain")
+    ids = mapping.get("motor_ids_by_joint", [])
+    if (
+        len(ids) != len(names)
+        or any(type(value) is not int or value < 0 or value > 14 for value in ids)
+        or len(set(ids)) != len(ids)
+    ):
+        raise ValueError("joint_map must contain one unique motor ID in [0,14] per active joint")
+    for field in ("direction", "zero_offset_rad"):
+        values = mapping.get(field, [])
+        if len(values) != len(names) or not all(
+            type(value) in (int, float) and math.isfinite(value) for value in values
+        ):
+            raise ValueError(f"joint_map {field} must match the active joint count")
+    if any(value not in (-1, 1) for value in mapping["direction"]):
+        raise ValueError("joint_map direction values must be -1 or 1")
+    calibration = mapping.get("calibration", {})
+    if not isinstance(calibration, dict):
+        raise ValueError("joint_map calibration must be an object")
+    anchor_fields = ("reference_joint_rad", "source_at_reference_rad")
+    if any(field in calibration for field in anchor_fields):
+        for field in anchor_fields:
+            values = calibration.get(field)
+            if (
+                not isinstance(values, list)
+                or len(values) != len(names)
+                or not all(type(value) in (int, float) and math.isfinite(value) for value in values)
+            ):
+                raise ValueError(f"joint_map calibration.{field} must match the active joint count")
+    limits = []
+    for joint in chain:
+        hard = joint.find("limit")
+        soft = joint.find("safety_controller")
+        lower, upper = float(hard.get("lower")), float(hard.get("upper"))
+        if soft is not None:
+            lower = max(lower, float(soft.get("soft_lower_limit", str(lower))))
+            upper = min(upper, float(soft.get("soft_upper_limit", str(upper))))
+        if not math.isfinite(lower) or not math.isfinite(upper) or lower >= upper:
+            raise ValueError(f"invalid active limits for {joint.get('name')}")
+        limits.append((lower, upper))
     return [
         {
             "name": f"J{i + 1}",
-            "id": i,
-            "angle": values[i],
+            "joint_name": joint.get("name"),
+            "id": ids[i],
+            "angle": 0.0,
             "velocity": 0.0,
             "torque": 0.0,
             "temperature": 30.0,
             "error": 0,
-            "min": JOINT_LIMITS[i][0],
-            "max": JOINT_LIMITS[i][1],
+            "min": limits[i][0],
+            "max": limits[i][1],
         }
-        for i in range(6)
+        for i, joint in enumerate(chain)
+    ], mapping
+
+
+def read_trajectory(path: str, joint_names: list[str]) -> list[float]:
+    expected = [
+        "time_s",
+        *(f"{name}_position_rad" for name in joint_names),
+        *(f"{name}_velocity_rad_s" for name in joint_names),
     ]
+    with Path(path).open(newline="", encoding="utf-8") as stream:
+        reader = csv.reader(stream)
+        if next(reader, None) != expected:
+            raise ActionError("trajectory columns must exactly match the active joint names", 400)
+        final = None
+        previous_time = -1.0
+        for row in reader:
+            try:
+                values = [float(value) for value in row]
+            except ValueError as exc:
+                raise ActionError("trajectory values must be numeric", 400) from exc
+            if len(values) != len(expected) or not all(math.isfinite(value) for value in values):
+                raise ActionError(
+                    "trajectory rows must contain finite values for every column", 400
+                )
+            if values[0] < 0 or values[0] <= previous_time:
+                raise ActionError(
+                    "trajectory times must be non-negative and strictly increasing", 400
+                )
+            previous_time = values[0]
+            final = values[1 : 1 + len(joint_names)]
+        if final is None:
+            raise ActionError("trajectory must contain at least one sample", 400)
+        return final
 
 
 class ActionError(Exception):
@@ -75,6 +158,9 @@ class ControlState:
         reader_path: str = READER,
         return_home_path: str = RETURN_HOME,
         gravity_path: str = GRAVITY,
+        config_path: Path = CONFIG,
+        urdf_path: Path = URDF,
+        calibration_pose_path: Path = CALIBRATION_POSE,
         popen: Callable[..., subprocess.Popen[str]] = subprocess.Popen,
     ) -> None:
         self.lock = threading.RLock()
@@ -89,7 +175,25 @@ class ControlState:
         self.enabled = self.estop = self.gravity = False
         self.mode = "hardware" if self.hardware else "simulation"
         self.lifecycle = "disconnected" if self.hardware else "simulation_ready"
-        self.joints = _default_joints()
+        self.config_path, self.urdf_path = Path(config_path), Path(urdf_path)
+        self.joints, self.mapping = load_model(self.urdf_path, self.config_path)
+        self.joint_names = [joint["joint_name"] for joint in self.joints]
+        self.dof = len(self.joints)
+        self.calibrated = all(
+            self.mapping.get(key) is True
+            for key in ("calibrated", "zero_calibrated", "direction_calibrated")
+        )
+        pose = json.loads(Path(calibration_pose_path).read_text(encoding="utf-8"))
+        reference = pose.get("reference_joint_rad")
+        self.home_reference = (
+            reference
+            if pose.get("validated") is True
+            and pose.get("joint_names") == self.joint_names
+            and isinstance(reference, list)
+            and len(reference) == self.dof
+            and all(type(value) in (int, float) and math.isfinite(value) for value in reference)
+            else None
+        )
         self.last_action = ""
         self.notice = "等待连接" if self.hardware else "仿真模式就绪"
         self.events: list[dict[str, Any]] = []
@@ -117,6 +221,13 @@ class ControlState:
                 "mode": self.mode,
                 "lifecycle": self.lifecycle,
                 "joints": [dict(j) for j in self.joints],
+                "dof": self.dof,
+                "joint_names": list(self.joint_names),
+                "calibrated": self.calibrated,
+                "calibration_pose_validated": self.home_reference is not None,
+                "angle_space": "urdf"
+                if not self.hardware or self.calibrated
+                else "uncalibrated_motor_output",
                 "last_action": self.last_action,
                 "notice": self.notice,
                 "hardware_io_enabled": self.hardware,
@@ -126,7 +237,8 @@ class ControlState:
                     "enable": not self.hardware,
                     "gravity": not self.hardware,
                     "movej": not self.hardware,
-                    "return_home": True,
+                    "return_home": self.home_reference is not None
+                    and (not self.hardware or self.calibrated),
                     "physical_estop": False,
                 },
                 "processes": {
@@ -155,7 +267,7 @@ class ControlState:
                 "--device",
                 "/dev/ttyUSB0",
                 "--ids",
-                "0,1,2,3,4,5",
+                ",".join(str(joint["id"]) for joint in self.joints),
                 "--mode",
                 "brake",
                 "--rate",
@@ -181,27 +293,55 @@ class ControlState:
                 raw = json.loads(line)
             except (json.JSONDecodeError, TypeError):
                 continue
-            if raw.get("type") != "sample":
+            if not isinstance(raw, dict) or raw.get("type") != "sample":
                 continue
-            by_id = {
-                int(item["id"]): item
-                for item in raw.get("motors", [])
-                if isinstance(item, dict) and "id" in item
-            }
-            if any(i not in by_id for i in range(6)):
+            motors = raw.get("motors")
+            if not isinstance(motors, list) or len(motors) != self.dof:
+                continue
+            if any(
+                not isinstance(item, dict) or type(item.get("id")) is not int for item in motors
+            ):
+                continue
+            by_id = {item["id"]: item for item in motors}
+            if set(by_id) != {joint["id"] for joint in self.joints}:
+                continue
+            updates = []
+            try:
+                for index, joint in enumerate(self.joints):
+                    item = by_id[joint["id"]]
+                    direction = self.mapping["direction"][index] if self.calibrated else 1
+                    offset = self.mapping["zero_offset_rad"][index] if self.calibrated else 0
+                    source_position = float(item[self.mapping.get("angle_field", "q_output_rad")])
+                    calibration = self.mapping.get("calibration", {})
+                    if self.calibrated and "reference_joint_rad" in calibration:
+                        angle = calibration["reference_joint_rad"][index] + direction * (
+                            source_position - calibration["source_at_reference_rad"][index]
+                        )
+                    else:
+                        angle = direction * (source_position - offset)
+                    values = {
+                        "angle": angle,
+                        "velocity": direction
+                        * float(item[self.mapping.get("velocity_field", "dq_output_rad_s")]),
+                        "torque": direction
+                        * float(item[self.mapping.get("torque_field", "tau_ideal_output_nm")]),
+                        "temperature": float(item["temperature_c"]),
+                        "error": int(item.get("error", 0)),
+                    }
+                    if not all(math.isfinite(value) for value in values.values()):
+                        raise ValueError("non-finite telemetry")
+                    updates.append(values)
+            except (KeyError, TypeError, ValueError, OverflowError):
                 continue
             with self.lock:
-                for joint in self.joints:
-                    item = by_id[joint["id"]]
-                    joint["angle"] = float(item.get("q_output_rad", joint["angle"]))
-                    joint["velocity"] = float(item.get("dq_output_rad_s", joint["velocity"]))
-                    joint["torque"] = float(item.get("tau_ideal_output_nm", joint["torque"]))
-                    joint["temperature"] = float(item.get("temperature_c", joint["temperature"]))
-                    joint["error"] = int(item.get("error", 0))
+                for joint, values in zip(self.joints, updates, strict=True):
+                    joint.update(values)
                 self.connected = True
                 if self.lifecycle in {"connecting", "disconnected"}:
                     self.lifecycle = "connected_read_only"
-                    self._set_action("feedback_online", "六轴反馈在线（读取器使用 BRAKE 轮询）")
+                    self._set_action(
+                        "feedback_online", f"{self.dof} 轴反馈在线（读取器使用 BRAKE 轮询）"
+                    )
 
     def stop_reader(self) -> None:
         with self.lock:
@@ -228,11 +368,10 @@ class ControlState:
                 self._set_action("connect", "仿真控制器已连接")
             else:
                 self.lifecycle = "connecting"
-                self._set_action("connect", "正在等待六轴反馈；尚未使能")
+                self._set_action("connect", f"正在等待 {self.dof} 轴反馈；尚未使能")
         if self.hardware:
             self.start_reader()
         return self.snapshot()
-
 
     def disconnect(self) -> dict[str, Any]:
         self.stop_reader()
@@ -309,8 +448,10 @@ class ControlState:
         return self.snapshot()
 
     def movej(self, joints: Any, speed: Any = 0.25, acceleration: Any = 0.5) -> dict[str, Any]:
-        if not isinstance(joints, list) or len(joints) != 6:
-            raise ActionError("joints must contain six radians", 400)
+        if not isinstance(joints, list) or len(joints) != self.dof:
+            raise ActionError(f"joints must contain {self.dof} radians", 400)
+        if any(type(value) not in (int, float) for value in [*joints, speed, acceleration]):
+            raise ActionError("joints, speed and acceleration must be numbers", 400)
         try:
             values = [float(x) for x in joints]
             speed_value, accel_value = float(speed), float(acceleration)
@@ -326,7 +467,9 @@ class ControlState:
             raise ActionError("speed and acceleration must be positive", 400)
         if any(
             value < lower or value > upper
-            for value, (lower, upper) in zip(values, JOINT_LIMITS, strict=True)
+            for value, (lower, upper) in zip(
+                values, [(joint["min"], joint["max"]) for joint in self.joints], strict=True
+            )
         ):
             raise ActionError("joint angle outside configured soft limit", 400)
         with self.lock:
@@ -348,6 +491,16 @@ class ControlState:
             raise ActionError("trajectory_path must be an existing calibration_home.csv", 400)
         if not confirmed:
             raise ActionError("confirm_collision_checked_plan is required", 400)
+        final = read_trajectory(trajectory, self.joint_names)
+        if self.home_reference is None or (self.hardware and not self.calibrated):
+            raise ActionError("当前机械臂尚未完成有效标定，回标定位不可用", 409)
+        if any(
+            abs(value - expected) > 1e-6
+            for value, expected in zip(final, self.home_reference, strict=True)
+        ):
+            raise ActionError(
+                "trajectory endpoint does not match the validated calibration pose", 400
+            )
         with self.lock:
             self._require_ready()
             if not self.enabled:
@@ -373,14 +526,14 @@ class ControlState:
                 self.lifecycle = "moving_to_calibration"
                 self._set_action("return_home_started", "回标定位已启动；等待进程完成")
             else:
-                for i, value in enumerate(HOME_REFERENCE):
+                for i, value in enumerate(final):
                     self.joints[i]["angle"], self.joints[i]["velocity"] = value, 0.0
                 self.lifecycle = "holding"
                 self._set_action("return_home", "仿真已回到桌面支撑标定位")
         return self.snapshot()
 
 
-def validate_program(program: Any) -> list[str]:
+def validate_program(program: Any, joints: list[dict[str, Any]]) -> list[str]:
     """Validate versioned online-program JSON without executing it."""
     errors: list[str] = []
     if not isinstance(program, dict):
@@ -390,7 +543,10 @@ def validate_program(program: Any) -> list[str]:
     nodes = program.get("nodes")
     if not isinstance(nodes, list) or not nodes:
         return errors + ["nodes must be a non-empty array"]
-    allowed = {"start", "end", "movej", "movel", "wait", "set", "if", "loop", "popup"}
+    allowed = {"start", "end", "movej", "wait"}
+    expected_names = [joint["joint_name"] for joint in joints]
+    if program.get("joint_names") != expected_names:
+        errors.append("joint_names must exactly match the active URDF chain")
     for index, node in enumerate(nodes):
         if not isinstance(node, dict):
             errors.append(f"nodes[{index}] must be an object")
@@ -399,14 +555,19 @@ def validate_program(program: Any) -> list[str]:
         if kind not in allowed:
             errors.append(f"nodes[{index}].type is unsupported")
         if kind == "movej":
-            joints = node.get("joints")
+            values = node.get("joints")
             valid_joints = (
-                isinstance(joints, list)
-                and len(joints) == 6
-                and all(isinstance(x, (int, float)) and math.isfinite(float(x)) for x in joints)
+                isinstance(values, list)
+                and len(values) == len(joints)
+                and all(type(x) in (int, float) and math.isfinite(float(x)) for x in values)
             )
             if not valid_joints:
-                errors.append(f"nodes[{index}].joints must contain six finite radians")
+                errors.append(f"nodes[{index}].joints must contain {len(joints)} finite radians")
+            elif any(
+                value < joint["min"] or value > joint["max"]
+                for value, joint in zip(values, joints, strict=True)
+            ):
+                errors.append(f"nodes[{index}].joints exceed active soft limits")
         if kind == "wait":
             try:
                 duration = float(node.get("duration_s"))
@@ -414,9 +575,9 @@ def validate_program(program: Any) -> list[str]:
                 duration = -1
             if not math.isfinite(duration) or duration < 0 or duration > 3600:
                 errors.append(f"nodes[{index}].duration_s must be in [0,3600]")
-    if nodes[0].get("type") != "start":
+    if not isinstance(nodes[0], dict) or nodes[0].get("type") != "start":
         errors.append("first node must be start")
-    if nodes[-1].get("type") != "end":
+    if not isinstance(nodes[-1], dict) or nodes[-1].get("type") != "end":
         errors.append("last node must be end")
     return errors
 
@@ -470,11 +631,18 @@ class Handler(BaseHTTPRequestHandler):
             self._send(
                 200,
                 {
-                    "path": str(CONFIG),
+                    "path": str(self.state.config_path),
+                    "urdf": str(self.state.urdf_path),
+                    "dof": self.state.dof,
+                    "joint_names": self.state.joint_names,
+                    "motor_ids_by_joint": [joint["id"] for joint in self.state.joints],
+                    "calibrated": self.state.calibrated,
                     "hardware": self.state.hardware,
                     "return_home": self.state.return_home_path,
-                    "joint_limits_rad": JOINT_LIMITS,
-                    "calibration_pose_rad": HOME_REFERENCE,
+                    "joint_limits_rad": [
+                        (joint["min"], joint["max"]) for joint in self.state.joints
+                    ],
+                    "calibration_pose_rad": self.state.home_reference,
                 },
             )
         elif not self.path.startswith("/api/"):
@@ -543,7 +711,7 @@ class Handler(BaseHTTPRequestHandler):
             if self.path in {"/api/stop", "/api/v1/stop"}:
                 return self._send(200, self.state.estop_action())
             if self.path in {"/api/program/validate", "/api/v1/program/validate"}:
-                errors = validate_program(body.get("program", body))
+                errors = validate_program(body.get("program", body), self.state.joints)
                 return self._send(
                     200 if not errors else 422, {"valid": not errors, "errors": errors}
                 )

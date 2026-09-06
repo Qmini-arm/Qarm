@@ -1,105 +1,18 @@
 {
-  "joint_names": [
-    "joint_1",
-    "joint_2",
-    "joint_3",
-    "joint_4",
-    "joint_5",
-    "joint_6"
-  ],
-  "motor_ids_by_joint": [
-    0,
-    1,
-    2,
-    3,
-    4,
-    5
-  ],
+  "joint_names": ["joint_1", "joint_2", "joint_3", "joint_4"],
+  "motor_ids_by_joint": [0, 1, 2, 3],
   "angle_field": "q_output_rad",
   "velocity_field": "dq_output_rad_s",
   "torque_field": "tau_ideal_output_nm",
-  "direction": [
-    1,
-    1,
-    1,
-    1,
-    1,
-    1
-  ],
-  "zero_offset_rad": [
-    0.706105351,
-    -0.22115209109967626,
-    2.1078809693071414,
-    1.3090959959535096,
-    0.0792437419,
-    0.54791922
-  ],
-  "zero_calibrated": true,
-  "direction_calibrated": true,
-  "calibrated": true,
+  "direction": [1, 1, 1, 1],
+  "zero_offset_rad": [0.0, 0.0, 0.0, 0.0],
+  "zero_calibrated": false,
+  "direction_calibrated": false,
+  "calibrated": false,
   "notes": [
-    "Hardware mapping confirmed by the operator: joint_1 through joint_6 use motor IDs 0 through 5 in order.",
-    "All six motor directions were verified by the operator against the live MuJoCo mirror after zero capture.",
-    "Zero capture uses config/calibration_pose.json; motor ID 5 is clockwise at its mechanical limit, mapped to joint_6=-1.57 rad.",
-    "The remote reader exposes both SDK-side and gear-ratio-converted values so fields can be changed without recompiling it.",
-    "tau_ideal_output_nm multiplies rotor torque by 6.33 but omits unknown gearbox efficiency; it is not calibrated output torque."
-  ],
-  "calibration": {
-    "captured_at_utc": "20260905T093036.408375Z",
-    "board_boot_id": "7121a127-c3ba-4ae7-8e65-65710b4dd346",
-    "motor_power_cycle_requires_recapture": true,
-    "query_mode": "BRAKE",
-    "angle_field": "q_output_rad",
-    "samples": 200,
-    "first_sequence": 0,
-    "last_sequence": 199,
-    "position_span_rad": [
-      9.083799999998199e-05,
-      9.084000000014747e-05,
-      9.08299999999862e-05,
-      9.08299999999862e-05,
-      9.087480000000148e-05,
-      9.09600000000843e-05
-    ],
-    "source_at_reference_rad": [
-      0.706105351,
-      1.52686572,
-      2.26268744,
-      1.28904366,
-      0.0792437419,
-      -1.02208078
-    ],
-    "rotor_at_reference_rad": [
-      4.46964693,
-      9.66506004,
-      14.3228121,
-      8.15964603,
-      0.501612902,
-      -6.46977091
-    ],
-    "reference_joint_rad": [
-      0.0,
-      1.7480178110996762,
-      0.1548064706928587,
-      -0.02005233595350972,
-      0.0,
-      -1.57
-    ],
-    "reference_joint_deg": [
-      0.0,
-      100.15404308970784,
-      8.869757412016472,
-      -1.1489142195145463,
-      0.0,
-      -89.95437383553924
-    ],
-    "rotor_zero_rad": [
-      4.46964693,
-      -1.3998927042609512,
-      13.342887140514204,
-      8.286577316585715,
-      0.501612902,
-      3.46832909
-    ]
-  }
+    "Four-axis model: joint_1 through joint_4 use motor IDs 0 through 3 in order. Verify this mapping on the rebuilt arm.",
+    "The previous six-axis encoder capture is invalid after the mechanical change, including the changed joint_4 frame. Recapture all four zero positions and verify directions before motion.",
+    "config/calibration_pose.json is an offline geometric reference, not a captured hardware calibration.",
+    "The reader exposes SDK-side and gear-ratio-converted values. tau_ideal_output_nm multiplies rotor torque by 6.33 and omits gearbox efficiency."
+  ]
 }

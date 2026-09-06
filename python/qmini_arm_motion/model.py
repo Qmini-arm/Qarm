@@ -85,7 +85,7 @@ class ChainState:
 
 
 class ArmModel:
-    """A six-axis URDF chain expressed entirely in the ``base_link`` frame."""
+    """A URDF serial chain expressed entirely in the ``base_link`` frame."""
 
     def __init__(
         self,
@@ -127,8 +127,8 @@ class ArmModel:
             current = joint.parent
         self.chain_joints = tuple(reversed(reverse_chain))
         self.joints = tuple(joint for joint in self.chain_joints if joint.actuated)
-        if len(self.joints) != 6:
-            raise ValueError(f"expected a 6-DoF chain, found {len(self.joints)}")
+        if not self.joints:
+            raise ValueError("the arm chain must contain at least one actuated joint")
         self.joint_names = tuple(joint.name for joint in self.joints)
         self.lower = np.array([joint.lower for joint in self.joints])
         self.upper = np.array([joint.upper for joint in self.joints])

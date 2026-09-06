@@ -53,6 +53,7 @@ std::vector<std::string> split(const std::string& value, char delimiter) {
   std::stringstream stream(value);
   std::string item;
   while (std::getline(stream, item, delimiter)) result.push_back(trim(item));
+  if (!value.empty() && value.back() == delimiter) result.emplace_back();
   return result;
 }
 
@@ -73,14 +74,14 @@ int parseInt(const std::string& name, const std::string& value) {
 }
 
 template <typename T, typename Parser>
-std::array<T, 6> parseArray(const std::string& name,
-                            const std::string& value,
-                            Parser parser) {
+qmini_arm::JointArray<T> parseArray(const std::string& name,
+                                  const std::string& value,
+                                  Parser parser) {
   const std::vector<std::string> items = split(value, ',');
-  if (items.size() != 6) {
-    throw std::runtime_error(name + " must contain exactly six values");
+  if (items.size() != qmini_arm::kJointCount) {
+    throw std::runtime_error(name + " must contain exactly four values");
   }
-  std::array<T, 6> result{};
+  qmini_arm::JointArray<T> result{};
   for (std::size_t index = 0; index < result.size(); ++index) {
     result[index] = parser(name, items[index]);
   }
@@ -90,9 +91,10 @@ std::array<T, 6> parseArray(const std::string& name,
 struct ControllerConfig {
   std::string device;
   std::string expected_board_boot_id;
+  bool calibration_confirmed = false;
   double gear_ratio = 0.0;
-  std::array<int, 6> motor_ids{};
-  std::array<int, 6> directions{};
+  qmini_arm::JointArray<int> motor_ids{};
+  qmini_arm::JointArray<int> directions{};
   JointVector rotor_at_reference_rad{};
   JointVector reference_joint_rad{};
   JointVector soft_lower_rad{};
@@ -136,7 +138,8 @@ std::map<std::string, std::string> readKeyValues(const std::string& path) {
     }
     const std::string key = trim(line.substr(0, equals));
     const std::string value = trim(line.substr(equals + 1));
-    if (key.empty() || value.empty() || result.count(key)) {
+    if (key.empty() ||
+        (value.empty() && key != "expected_board_boot_id") || result.count(key)) {
       throw std::runtime_error("invalid or duplicate config key at line " +
                                std::to_string(line_number));
     }
@@ -158,6 +161,7 @@ ControllerConfig loadConfig(const std::string& path) {
       "schema_version",
       "device",
       "expected_board_boot_id",
+      "calibration_confirmed",
       "gear_ratio",
       "motor_ids",
       "directions",
@@ -190,12 +194,20 @@ ControllerConfig loadConfig(const std::string& path) {
       throw std::runtime_error("unknown config key: " + item.first);
     }
   }
-  if (parseInt("schema_version", required(values, "schema_version")) != 2) {
-    throw std::runtime_error("unsupported gravity config schema_version");
+  if (parseInt("schema_version", required(values, "schema_version")) != 3) {
+    throw std::runtime_error("four-joint gravity control requires config schema 3");
   }
   ControllerConfig config;
   config.device = required(values, "device");
   config.expected_board_boot_id = required(values, "expected_board_boot_id");
+  const std::string confirmed = required(values, "calibration_confirmed");
+  if (confirmed != "true" && confirmed != "false") {
+    throw std::runtime_error("calibration_confirmed must be true or false");
+  }
+  config.calibration_confirmed = confirmed == "true";
+  if (config.calibration_confirmed && config.expected_board_boot_id.empty()) {
+    throw std::runtime_error("confirmed calibration requires a board boot ID");
+  }
   config.gear_ratio = parseDouble("gear_ratio", required(values, "gear_ratio"));
   config.motor_ids = parseArray<int>(
       "motor_ids", required(values, "motor_ids"), parseInt);
@@ -273,9 +285,9 @@ ControllerConfig loadConfig(const std::string& path) {
       config.maximum_duration_s > 60.0) {
     throw std::runtime_error("gravity config violates safety bounds");
   }
-  for (std::size_t index = 0; index < 6; ++index) {
+  for (std::size_t index = 0; index < qmini_arm::kJointCount; ++index) {
     if (config.motor_ids[index] != static_cast<int>(index)) {
-      throw std::runtime_error("deployment requires motor IDs 0..5 in order");
+      throw std::runtime_error("deployment requires motor IDs 0..3 in order");
     }
     if (config.directions[index] != -1 && config.directions[index] != 1) {
       throw std::runtime_error("directions must contain only +1 or -1");
@@ -382,7 +394,7 @@ std::string readSingleLine(const std::string& path) {
   return trim(value);
 }
 
-JointVector jointPosition(const std::array<qmini_arm::MotorState, 6>& state,
+JointVector jointPosition(const qmini_arm::JointArray<qmini_arm::MotorState>& state,
                           const ControllerConfig& config) {
   JointVector result{};
   for (std::size_t index = 0; index < result.size(); ++index) {
@@ -395,7 +407,7 @@ JointVector jointPosition(const std::array<qmini_arm::MotorState, 6>& state,
   return result;
 }
 
-JointVector jointVelocity(const std::array<qmini_arm::MotorState, 6>& state,
+JointVector jointVelocity(const qmini_arm::JointArray<qmini_arm::MotorState>& state,
                           const ControllerConfig& config) {
   JointVector result{};
   for (std::size_t index = 0; index < result.size(); ++index) {
@@ -447,9 +459,9 @@ void validatePoseLimits(const JointVector& position,
   }
 }
 
-std::array<qmini_arm::MotorState, 6> readBrake(
+qmini_arm::JointArray<qmini_arm::MotorState> readBrake(
     qmini_arm::MotorBus& bus, const ControllerConfig& config) {
-  std::array<qmini_arm::MotorState, 6> result{};
+  qmini_arm::JointArray<qmini_arm::MotorState> result{};
   for (std::size_t index = 0; index < result.size(); ++index) {
     result[index] = bus.readStateBrake(config.motor_ids[index]);
     validateFeedback(result[index], config.motor_ids[index], bus.brakeMode(),
@@ -470,8 +482,10 @@ void printVector(const char* name, const JointVector& values) {
 void finalBrake(qmini_arm::MotorBus& bus, const ControllerConfig& config) {
   const std::vector<int> ids(config.motor_ids.begin(), config.motor_ids.end());
   const int acknowledgements = bus.sendBrake(ids, 3);
-  std::cerr << "BRAKE acknowledgements=" << acknowledgements << "/18\n";
-  if (acknowledgements != 18) {
+  const int expected = static_cast<int>(ids.size()) * 3;
+  std::cerr << "BRAKE acknowledgements=" << acknowledgements << '/'
+            << expected << '\n';
+  if (acknowledgements != expected) {
     std::cerr << "WARNING: BRAKE was not confirmed by every motor; use the "
                  "physical power cutoff.\n";
   }
@@ -505,6 +519,11 @@ void dryRun(const ControllerConfig& config) {
 }
 
 int runHardware(const ControllerConfig& config, Options options) {
+  if (!config.calibration_confirmed) {
+    throw std::runtime_error(
+        "four-joint calibration is unconfirmed; recapture calibration before "
+        "using hardware modes");
+  }
   if (!options.acknowledge_supported_arm ||
       !options.confirm_same_motor_power_cycle) {
     throw std::runtime_error(
@@ -539,7 +558,7 @@ int runHardware(const ControllerConfig& config, Options options) {
     if (std::abs(bus->gearRatio() - config.gear_ratio) > 1e-3) {
       throw std::runtime_error("configured gear ratio differs from Unitree SDK");
     }
-    std::array<qmini_arm::MotorState, 6> states{};
+    qmini_arm::JointArray<qmini_arm::MotorState> states{};
     qmini_arm::PerJointSpeedGuard speed_guard(
         config.joint_speed_trip_rad_s,
         config.joint_speed_hard_trip_rad_s,
@@ -613,7 +632,7 @@ int runHardware(const ControllerConfig& config, Options options) {
           config.rotor_torque_caps_nm,
           config.rotor_torque_slew_nm_per_cycle, &saturated);
 
-      std::array<qmini_arm::MotorState, 6> next{};
+      qmini_arm::JointArray<qmini_arm::MotorState> next{};
       for (std::size_t index = 0; index < next.size(); ++index) {
         if (stop_requested) break;
         const double send_lateness_s = std::chrono::duration<double>(

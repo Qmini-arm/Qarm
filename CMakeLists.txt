@@ -5,18 +5,19 @@ set(CMAKE_CXX_STANDARD 14)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-option(QMINI_ARM_BUILD_APPS "Build command-line applications" ON)
+set(QMINI_ARM_APPS_DEFAULT OFF)
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  set(QMINI_ARM_APPS_DEFAULT ON)
+endif()
+option(QMINI_ARM_BUILD_APPS "Build Linux Unitree command-line applications"
+       ${QMINI_ARM_APPS_DEFAULT})
 option(QMINI_ARM_BUILD_TESTS "Build offline unit tests" ON)
-
-list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
-include(UnitreeActuatorSDK)
 
 add_library(qmini_arm_core
   src/gravity_control.cpp
   src/gravity_model.cpp
   src/joint_trajectory.cpp
   src/joint_conversion.cpp
-  src/motor_bus.cpp
   src/safety.cpp
   src/sine_trajectory.cpp
 )
@@ -25,31 +26,42 @@ add_library(QminiArm::Core ALIAS qmini_arm_core)
 target_include_directories(qmini_arm_core
   PUBLIC
     "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
-  PRIVATE
-    "${UNITREE_ACTUATOR_SDK_INCLUDE_DIR}"
 )
-target_link_libraries(qmini_arm_core PRIVATE Unitree::ActuatorSDK)
 target_compile_options(qmini_arm_core PRIVATE -Wall -Wextra -Wpedantic)
 
 if(QMINI_ARM_BUILD_APPS)
+  if(NOT CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    message(FATAL_ERROR
+      "Unitree hardware applications require Linux. "
+      "Use -DQMINI_ARM_BUILD_APPS=OFF for portable core tests.")
+  endif()
+  list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
+  include(UnitreeActuatorSDK)
+  add_library(qmini_arm_hardware src/motor_bus.cpp)
+  add_library(QminiArm::Hardware ALIAS qmini_arm_hardware)
+  target_link_libraries(qmini_arm_hardware
+    PUBLIC QminiArm::Core
+    PRIVATE Unitree::ActuatorSDK)
+  target_compile_options(qmini_arm_hardware PRIVATE -Wall -Wextra -Wpedantic)
+
   add_executable(qmini_motor_state apps/read_motor_state.cpp)
   target_include_directories(qmini_motor_state PRIVATE apps)
-  target_link_libraries(qmini_motor_state PRIVATE QminiArm::Core)
+  target_link_libraries(qmini_motor_state PRIVATE QminiArm::Hardware)
   target_compile_options(qmini_motor_state PRIVATE -Wall -Wextra -Wpedantic)
 
   add_executable(qmini_sine_position apps/sine_position_test.cpp)
   target_include_directories(qmini_sine_position PRIVATE apps)
-  target_link_libraries(qmini_sine_position PRIVATE QminiArm::Core)
+  target_link_libraries(qmini_sine_position PRIVATE QminiArm::Hardware)
   target_compile_options(qmini_sine_position PRIVATE -Wall -Wextra -Wpedantic)
 
   add_executable(qmini_gravity_comp apps/gravity_compensation.cpp)
   target_include_directories(qmini_gravity_comp PRIVATE apps)
-  target_link_libraries(qmini_gravity_comp PRIVATE QminiArm::Core)
+  target_link_libraries(qmini_gravity_comp PRIVATE QminiArm::Hardware)
   target_compile_options(qmini_gravity_comp PRIVATE -Wall -Wextra -Wpedantic)
 
   add_executable(qmini_return_to_zero apps/return_to_zero.cpp)
   target_include_directories(qmini_return_to_zero PRIVATE apps)
-  target_link_libraries(qmini_return_to_zero PRIVATE QminiArm::Core)
+  target_link_libraries(qmini_return_to_zero PRIVATE QminiArm::Hardware)
   target_compile_options(qmini_return_to_zero PRIVATE -Wall -Wextra -Wpedantic)
 
   # The Unitree SDK is a prebuilt shared library. Keep build-tree executables
@@ -76,9 +88,6 @@ if(BUILD_TESTING AND QMINI_ARM_BUILD_TESTS)
   add_executable(qmini_arm_core_tests tests/core_tests.cpp)
   target_link_libraries(qmini_arm_core_tests PRIVATE QminiArm::Core)
   target_compile_options(qmini_arm_core_tests PRIVATE -Wall -Wextra -Wpedantic)
-  set_target_properties(qmini_arm_core_tests PROPERTIES
-    BUILD_RPATH "${UNITREE_ACTUATOR_SDK_LIBRARY_DIR}"
-  )
   add_test(NAME core_tests COMMAND qmini_arm_core_tests)
 
   if(QMINI_ARM_BUILD_APPS)

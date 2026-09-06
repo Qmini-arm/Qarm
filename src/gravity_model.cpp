@@ -110,35 +110,28 @@ Vec3 transformPoint(const Transform& transform, const Vec3& point) {
   return add(transform.position, multiply(transform.rotation, point));
 }
 
-const Transform kJointOrigins[6] = {
+const JointArray<Transform> kJointOrigins = {{
     {rpy(0.0, 0.0, 0.0), {0.0, 0.0, 0.0}},
     {rpy(0.7259, 0.844114116, -1.570796327),
      {0.082449884, 0.000464880, 0.000523357}},
     {rpy(1.453370820, 0.0, -3.141592654),
      {0.013000008, 0.224214994, -0.199318371}},
-    {rpy(1.45178, 0.0, -3.141592654),
+    {rpy(-1.68822, 0.0, -3.141592654),
      {0.013000008, -0.224214968, 0.199318367}},
-    {rpy(-0.844107722, 0.844114116, -1.570796327),
-     {0.082449884, 0.000464880, 0.000523357}},
-    {rpy(0.7259, -0.844114116, 1.570796327),
-     {0.083950124, -0.000465277, -0.000522985}},
-};
+}};
 
-const Vec3 kLinkCentersOfMass[6] = {
+// Each actuated joint's child: link_1, link_2, link_3, and the tool mount link_6.
+const JointArray<Vec3> kLinkCentersOfMass = {{
     {0.076902896, -0.000540190, -0.000692581},
     {0.016355333, 0.193045983, -0.171512178},
     {0.016353625, -0.193059219, 0.171524730},
-    {0.076904739, -0.000544010, -0.000695119},
-    {0.078231092, 0.000626505, 0.000621803},
     {0.021295905, -0.013071630, 0.011629218},
-};
+}};
 
-const double kLinkMassesKg[6] = {
+const JointVector kLinkMassesKg = {
     0.567450382,
     0.676212997,
     0.676213000,
-    0.567450400,
-    0.567450400,
     0.016653600,
 };
 
@@ -162,11 +155,11 @@ JointVector GravityModel::compensationTorque(
                           {0.0, 1.0, 0.0},
                           {0.0, 0.0, 1.0}}};
   Transform parent{identity, {0.0, 0.0, 0.0}};
-  Vec3 joint_origins[6]{};
-  Vec3 joint_axes[6]{};
-  Vec3 centers_of_mass[6]{};
+  JointArray<Vec3> joint_origins{};
+  JointArray<Vec3> joint_axes{};
+  JointArray<Vec3> centers_of_mass{};
 
-  for (int index = 0; index < 6; ++index) {
+  for (std::size_t index = 0; index < kJointCount; ++index) {
     const Transform joint_frame = compose(parent, kJointOrigins[index]);
     joint_origins[index] = joint_frame.position;
     joint_axes[index] =
@@ -181,9 +174,9 @@ JointVector GravityModel::compensationTorque(
   }
 
   JointVector result{};
-  for (int joint = 0; joint < 6; ++joint) {
+  for (std::size_t joint = 0; joint < kJointCount; ++joint) {
     double gravity_generalized_force = 0.0;
-    for (int link = joint; link < 6; ++link) {
+    for (std::size_t link = joint; link < kJointCount; ++link) {
       const Vec3 lever = subtract(centers_of_mass[link], joint_origins[joint]);
       const Vec3 force = scale(gravity_base, kLinkMassesKg[link]);
       gravity_generalized_force +=

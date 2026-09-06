@@ -26,7 +26,7 @@ void stop_handler(int) { running.store(false); }
 
 struct Options {
   std::string device{"/dev/ttyUSB0"};
-  std::vector<int> ids{0, 1, 2, 3, 4, 5};
+  std::vector<int> ids{0, 1, 2, 3};
   double rate_hz{100.0};
   std::size_t count{0};
   bool dry_run{false};

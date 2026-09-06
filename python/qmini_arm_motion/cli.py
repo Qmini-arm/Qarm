@@ -31,7 +31,7 @@ def _parser() -> argparse.ArgumentParser:
     commands = parser.add_subparsers(dest="command", required=True)
 
     fk = commands.add_parser("fk", help="base_link -> tool0 forward kinematics")
-    fk.add_argument("--q-deg", type=float, nargs=6, required=True)
+    fk.add_argument("--q-deg", type=float, nargs="+", required=True, metavar="DEG")
 
     workspace = commands.add_parser("workspace", help="sample collision-free reachable points")
     workspace.add_argument("--samples", type=int, default=20000)
@@ -40,11 +40,11 @@ def _parser() -> argparse.ArgumentParser:
 
     plan = commands.add_parser("plan", help="plan from a joint state to a target point")
     plan.add_argument("--target", type=float, nargs=3, required=True, metavar=("X", "Y", "Z"))
-    plan.add_argument("--start-deg", type=float, nargs=6, default=[0.0] * 6)
+    plan.add_argument("--start-deg", type=float, nargs="+", metavar="DEG")
     plan.add_argument("--output", type=Path, help="write M8010 command frames as CSV")
 
     viz = commands.add_parser("viz", help="launch the interactive browser simulation")
-    viz.add_argument("--start-deg", type=float, nargs=6, default=[0.0] * 6)
+    viz.add_argument("--start-deg", type=float, nargs="+", metavar="DEG")
     viz.add_argument("--workspace-samples", type=int, default=20000)
     viz.add_argument("--host", default="0.0.0.0")
     viz.add_argument("--port", type=int, default=8080)
@@ -75,8 +75,14 @@ def main(argv: list[str] | None = None) -> int:
         model = ArmModel(args.urdf)
         collision = CollisionChecker(model)
         mapper = M8010CommandMapper.from_yaml(model, args.motor_config)
+        if hasattr(args, "start_deg"):
+            args.start_deg = [0.0] * model.dof if args.start_deg is None else args.start_deg
+            if len(args.start_deg) != model.dof:
+                raise ValueError(f"--start-deg requires {model.dof} joint angles")
 
         if args.command == "fk":
+            if len(args.q_deg) != model.dof:
+                raise ValueError(f"--q-deg requires {model.dof} joint angles")
             q = np.radians(args.q_deg)
             if not model.within_limits(q):
                 raise ValueError("joint vector violates the URDF soft limits")

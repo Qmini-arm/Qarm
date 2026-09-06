@@ -34,7 +34,11 @@ unitree_actuator_sdk + RS-485 + M8010
 - `MotorCommand`：转子侧力位混合命令；
 - `MotorState`：SDK 返回的转子侧状态；
 - `JointCalibration`：电机 ID、减速比、方向和机械零位映射；
-- `JointState`：供机械臂算法使用的关节侧状态。
+- `JointState`：供机械臂算法使用的关节侧状态；
+- `kJointCount=4`、`JointArray<T>` 和 `JointVector`：当前四轴整臂容器。
+
+`QminiArm::Core` 只包含数学、安全、换算和轨迹代码，可在 macOS 离线构建测试；
+`QminiArm::Hardware` 加入 Linux `MotorBus` 和 Unitree SDK，由硬件应用链接。
 
 ### `MotorBus`
 
@@ -76,8 +80,8 @@ unitree_actuator_sdk + RS-485 + M8010
 
 ```text
 include/qmini_arm/
-├── arm_config.hpp          # 六关节 ID/方向/零位/限位配置
-├── joint_group.hpp         # 一次控制周期的六轴状态与命令
+├── arm_config.hpp          # 四关节 ID/方向/零位/限位配置
+├── joint_group.hpp         # 一次控制周期的四轴状态与命令
 ├── arm_model.hpp           # 若需要全 C++ 实时控制，可适配 Python 已验证模型
 ├── trajectory_executor.hpp # 消费规划轨迹并按周期命令下发
 └── control_state_machine.hpp
@@ -85,8 +89,8 @@ include/qmini_arm/
 
 推荐实施顺序：
 
-1. 实机标定六个 URDF 关节的 ID、方向、回零值，并更新现有 YAML 配置；
-2. 增加只读状态聚合器，一次轮询形成带时间戳的六轴 `JointState`；
+1. 实机标定四个 URDF 关节的 ID、方向、回零值，并更新现有 YAML 配置；
+2. 增加只读状态聚合器，一次轮询形成带时间戳的四轴 `JointState`；
 3. 用实机反馈验证 FK 数字孪生、机械尺寸、转轴方向和零位一致；
 4. 实现消费现有规划轨迹的单线程硬件 adapter，并接回安全检查；
 5. 低速、无负载验证后，再接入 ROS 2 `ros2_control` 或自定义上层接口。

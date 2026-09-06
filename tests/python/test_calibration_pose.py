@@ -15,16 +15,14 @@ def test_stl_calibration_pose_matches_accepted_manual_setup() -> None:
             0.0,
             1.7480178111,
             0.1548064707,
-            -0.0200523360,
             0.0,
-            -1.57,
         ],
         atol=2e-8,
     )
     assert abs(solution.arm_link_gap_m) < 1e-8
     assert abs(solution.motor_3_gap_m) < 1e-8
-    assert solution.motor_4_axis_vertical_error_deg < 0.1
-    assert solution.motor_5_table_clearance_m > 0.08
+    assert solution.tool_axis_vertical_error_deg < 2.0
+    assert solution.tool_mount_table_clearance_m > 0.01
 
     configured = json.loads(
         (ROOT / "config/calibration_pose.json").read_text()

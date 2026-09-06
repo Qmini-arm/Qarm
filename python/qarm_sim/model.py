@@ -207,6 +207,8 @@ def build_scene(
     _configure_mjcf(root, mapping, motor)
     mjcf = ET.tostring(root, encoding="unicode")
     model = mujoco.MjModel.from_xml_string(mjcf, assets=assets)
+    if model.nq != len(mapping.joint_names) or model.nv != len(mapping.joint_names):
+        raise ValueError("joint map must cover every actuated joint in the MuJoCo model")
     joint_ids = np.array(
         [
             mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, name)
@@ -245,7 +247,7 @@ def set_mirrored_state(
     position = np.asarray(position, dtype=np.float64)
     if position.shape != scene.qpos_addresses.shape:
         raise ValueError(
-            f"position shape {position.shape} does not match six-joint model"
+            f"position shape {position.shape} does not match {len(scene.joint_names)}-joint model"
         )
     scene.data.qpos[scene.qpos_addresses] = position
     if velocity is None:

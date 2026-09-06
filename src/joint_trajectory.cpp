@@ -12,12 +12,14 @@ namespace {
 
 std::vector<std::string> splitCsv(const std::string& line) {
   std::vector<std::string> result;
-  std::stringstream stream(line);
+  std::string normalized = line;
+  if (!normalized.empty() && normalized.back() == '\r') normalized.pop_back();
+  std::stringstream stream(normalized);
   std::string item;
   while (std::getline(stream, item, ',')) {
-    if (!item.empty() && item.back() == '\r') item.pop_back();
     result.push_back(item);
   }
+  if (!normalized.empty() && normalized.back() == ',') result.emplace_back();
   return result;
 }
 
@@ -43,10 +45,10 @@ double parseNumber(const std::string& text,
 
 std::vector<std::string> expectedHeader() {
   std::vector<std::string> result = {"time_s"};
-  for (int joint = 1; joint <= 6; ++joint) {
+  for (std::size_t joint = 1; joint <= kJointCount; ++joint) {
     result.push_back("joint_" + std::to_string(joint) + "_position_rad");
   }
-  for (int joint = 1; joint <= 6; ++joint) {
+  for (std::size_t joint = 1; joint <= kJointCount; ++joint) {
     result.push_back("joint_" + std::to_string(joint) + "_velocity_rad_s");
   }
   return result;
@@ -67,7 +69,7 @@ JointTrajectory parseJointTrajectoryCsv(std::istream& stream) {
   }
   if (splitCsv(line) != expectedHeader()) {
     throw std::runtime_error(
-        "trajectory CSV header does not match qmini_home_plan_v1");
+        "trajectory CSV header does not match the four-joint home plan");
   }
 
   JointTrajectory result;
@@ -76,19 +78,21 @@ JointTrajectory parseJointTrajectoryCsv(std::istream& stream) {
     ++line_number;
     if (line.empty() || line == "\r") continue;
     const std::vector<std::string> columns = splitCsv(line);
-    if (columns.size() != 13) {
+    constexpr std::size_t kColumnCount = 1 + 2 * kJointCount;
+    if (columns.size() != kColumnCount) {
       throw std::runtime_error("trajectory line " +
                                std::to_string(line_number) +
-                               " must contain exactly 13 columns");
+                               " must contain exactly " +
+                               std::to_string(kColumnCount) + " columns");
     }
     JointTrajectorySample sample;
     sample.time_s = parseNumber(columns[0], line_number, "time_s");
-    for (std::size_t index = 0; index < 6; ++index) {
+    for (std::size_t index = 0; index < qmini_arm::kJointCount; ++index) {
       sample.position_rad[index] = parseNumber(
           columns[1 + index], line_number,
           "joint_" + std::to_string(index + 1) + "_position_rad");
       sample.velocity_rad_s[index] = parseNumber(
-          columns[7 + index], line_number,
+          columns[1 + kJointCount + index], line_number,
           "joint_" + std::to_string(index + 1) + "_velocity_rad_s");
     }
     result.push_back(sample);
@@ -127,7 +131,7 @@ void validateHomeTrajectory(const JointTrajectory& trajectory,
   validatePositiveFinite(maximum_sample_period_s, "maximum sample period");
   validatePositiveFinite(maximum_duration_s, "maximum duration");
   validatePositiveFinite(final_tolerance_rad, "final tolerance");
-  for (std::size_t joint = 0; joint < 6; ++joint) {
+  for (std::size_t joint = 0; joint < qmini_arm::kJointCount; ++joint) {
     if (!std::isfinite(hard_lower_rad[joint]) ||
         !std::isfinite(hard_upper_rad[joint]) ||
         !std::isfinite(goal_position_rad[joint]) ||
@@ -148,7 +152,7 @@ void validateHomeTrajectory(const JointTrajectory& trajectory,
     if (!std::isfinite(sample.time_s)) {
       throw std::runtime_error("trajectory contains a non-finite time");
     }
-    for (std::size_t joint = 0; joint < 6; ++joint) {
+    for (std::size_t joint = 0; joint < qmini_arm::kJointCount; ++joint) {
       const double position = sample.position_rad[joint];
       const double velocity = sample.velocity_rad_s[joint];
       if (!std::isfinite(position) || !std::isfinite(velocity)) {
@@ -184,7 +188,7 @@ void validateHomeTrajectory(const JointTrajectory& trajectory,
       throw std::runtime_error(
           "trajectory timestamps are not strictly increasing at the required rate");
     }
-    for (std::size_t joint = 0; joint < 6; ++joint) {
+    for (std::size_t joint = 0; joint < qmini_arm::kJointCount; ++joint) {
       const double sampled_acceleration =
           (sample.velocity_rad_s[joint] -
            previous.velocity_rad_s[joint]) /
@@ -203,7 +207,7 @@ void validateHomeTrajectory(const JointTrajectory& trajectory,
     }
   }
 
-  for (std::size_t joint = 0; joint < 6; ++joint) {
+  for (std::size_t joint = 0; joint < qmini_arm::kJointCount; ++joint) {
     if (std::abs(trajectory.front().velocity_rad_s[joint]) > 1e-8 ||
         std::abs(trajectory.back().position_rad[joint] -
                  goal_position_rad[joint]) >

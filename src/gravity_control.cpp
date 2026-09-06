@@ -11,7 +11,7 @@ namespace qmini_arm {
 JointVector jointGravityToRotorTorque(
     const JointVector& joint_torque_nm,
     double compensation_scale,
-    const std::array<int, 6>& directions,
+    const qmini_arm::JointArray<int>& directions,
     double gear_ratio) {
   if (!std::isfinite(compensation_scale) || compensation_scale < 0.0 ||
       !std::isfinite(gear_ratio) || gear_ratio <= 0.0) {

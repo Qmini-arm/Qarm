@@ -27,13 +27,13 @@ def test_root_gravity_is_transformed_to_base_link(
             )
         )
     )
-    assert np.isclose(angle_deg, 13.972923, atol=1e-5)
+    assert np.isclose(angle_deg, 0.660280889, atol=1e-5)
 
 
 def test_mass_matrix_and_gravity_match_urdf_energy(
     model: ArmModel, dynamics: ArmDynamics
 ) -> None:
-    q = np.array([0.2, -0.1, 0.3, 0.05, -0.2, 0.1])
+    q = np.array([0.2, -0.1, 0.3, 0.05])
     matrix = dynamics.mass_matrix(q)
     assert np.allclose(matrix, matrix.T, atol=1e-12)
     assert np.min(np.linalg.eigvalsh(matrix)) > 0.0

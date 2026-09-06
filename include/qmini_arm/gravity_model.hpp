@@ -1,11 +1,9 @@
 #ifndef QMINI_ARM_GRAVITY_MODEL_HPP_
 #define QMINI_ARM_GRAVITY_MODEL_HPP_
 
-#include <array>
+#include "qmini_arm/types.hpp"
 
 namespace qmini_arm {
-
-using JointVector = std::array<double, 6>;
 
 // Gravity-only inverse dynamics generated from qmini_arm.urdf.xacro.
 // The returned vector is the joint torque that holds a static pose against

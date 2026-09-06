@@ -190,7 +190,7 @@ def launch_visualization(
         initial_sample = simulator.advance(initial_frame, 0.0, compensate_gravity=True)
         simulation_table = server.gui.add_markdown(_simulation_table(initial_frame, initial_sample))
 
-    with server.gui.add_folder("六轴 M8010 控制参数"):
+    with server.gui.add_folder(f"{model.dof} 轴 M8010 控制参数"):
         calibration_note = (
             "绝对转子位置已由标定计算。"
             if mapper.absolute_positions_available

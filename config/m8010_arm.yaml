@@ -27,5 +27,3 @@ joints:
   - {name: joint_2, motor_id: 1, direction: 1, calibrated: false, rotor_zero_rad: 0.0, joint_zero_rad: 0.0}
   - {name: joint_3, motor_id: 2, direction: 1, calibrated: false, rotor_zero_rad: 0.0, joint_zero_rad: 0.0}
   - {name: joint_4, motor_id: 3, direction: 1, calibrated: false, rotor_zero_rad: 0.0, joint_zero_rad: 0.0}
-  - {name: joint_5, motor_id: 4, direction: 1, calibrated: false, rotor_zero_rad: 0.0, joint_zero_rad: 0.0}
-  - {name: joint_6, motor_id: 5, direction: 1, calibrated: false, rotor_zero_rad: 0.0, joint_zero_rad: 0.0}

@@ -9,20 +9,20 @@ from qarm_sim.telemetry import TelemetrySample
 
 def _mapping() -> JointMap:
     return JointMap(
-        joint_names=tuple(f"joint_{i}" for i in range(1, 7)),
-        motor_ids_by_joint=np.arange(6, dtype=np.int64),
+        joint_names=tuple(f"joint_{i}" for i in range(1, 5)),
+        motor_ids_by_joint=np.arange(4, dtype=np.int64),
         angle_field="q_output_rad",
         velocity_field="dq_output_rad_s",
         torque_field="tau_ideal_output_nm",
-        direction=np.ones(6),
-        zero_offset_rad=np.zeros(6),
+        direction=np.ones(4),
+        zero_offset_rad=np.zeros(4),
         calibrated=False,
     )
 
 
 def _sample(sequence: int, shift: float = 0.0) -> TelemetrySample:
     motors = []
-    for motor_id in range(6):
+    for motor_id in range(4):
         q = 0.1 * (motor_id + 1) + shift
         motors.append(
             {
@@ -56,7 +56,7 @@ def test_estimate_and_atomically_save_zero(tmp_path) -> None:
     mapping = _mapping()
     samples = [_sample(i, (i % 3 - 1) * 1e-4) for i in range(30)]
     estimate = estimate_zero(samples, mapping, maximum_span_rad=0.001)
-    assert np.allclose(estimate.source_zero_rad, np.arange(1, 7) * 0.1)
+    assert np.allclose(estimate.source_zero_rad, np.arange(1, 5) * 0.1)
     assert np.all(estimate.position_span_rad <= 0.0002 + 1e-12)
 
     path = tmp_path / "joint_map.json"
@@ -85,7 +85,7 @@ def test_estimate_and_atomically_save_zero(tmp_path) -> None:
     assert saved["direction_calibrated"] is False
     assert saved["calibrated"] is False
     assert saved["calibration"]["board_boot_id"] == "test-boot-id"
-    assert np.allclose(saved["zero_offset_rad"], np.arange(1, 7) * 0.1)
+    assert np.allclose(saved["zero_offset_rad"], np.arange(1, 5) * 0.1)
 
 
 def test_zero_capture_rejects_motion() -> None:
@@ -98,7 +98,7 @@ def test_zero_capture_rejects_motion() -> None:
 
 def test_reference_pose_is_removed_from_encoder_zero() -> None:
     mapping = _mapping()
-    reference = np.array([0.0, -1.7, -0.2, 0.0, 0.0, -1.57])
+    reference = np.array([0.0, -1.7, -0.2, -0.02])
     samples = [_sample(i) for i in range(20)]
     estimate = estimate_zero(
         samples,
@@ -107,7 +107,7 @@ def test_reference_pose_is_removed_from_encoder_zero() -> None:
         reference_joint_rad=reference,
         gear_ratio=6.33,
     )
-    measured_output = np.arange(1, 7) * 0.1
+    measured_output = np.arange(1, 5) * 0.1
     assert np.allclose(
         estimate.source_zero_rad, measured_output - reference
     )

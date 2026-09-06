@@ -83,16 +83,16 @@ class JointMap:
         raw = _load_json(path)
         names = tuple(str(value) for value in raw["joint_names"])
         size = len(names)
-        if size != 6 or len(set(names)) != size:
-            raise ValueError("joint map must define six unique joints")
+        if size == 0 or len(set(names)) != size or any(not name for name in names):
+            raise ValueError("joint map must define non-empty unique joints")
         ids = _vector(
             raw["motor_ids_by_joint"],
             name="motor_ids_by_joint",
             size=size,
             dtype=np.int64,
         )
-        if len(set(int(value) for value in ids)) != size:
-            raise ValueError("motor_ids_by_joint must be unique")
+        if len(set(int(value) for value in ids)) != size or np.any((ids < 0) | (ids > 14)):
+            raise ValueError("motor_ids_by_joint must be unique IDs in [0, 14]")
         direction = _vector(raw["direction"], name="direction", size=size)
         if not np.all(np.isin(direction, (-1.0, 1.0))):
             raise ValueError("direction entries must be +1 or -1")

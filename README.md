@@ -1,6 +1,6 @@
 # Qmini Unitree Arm
 
-`Qarm` 是面向 Qmini 六轴机械臂后续开发的混合工程。C++14 层完成了
+`Qarm` 是面向 Qmini 四轴机械臂的混合工程。C++14 层完成了
 GO-M8010-6 通信、转子/关节坐标换算和台架测试；Python 层完成了基于 URDF 的 FK、
 无自碰撞工作空间采样、位置 IK、轨迹规划、M8010 命令生成和带重力的初步关节动力学
 可视化。
@@ -32,21 +32,34 @@ Qarm/
 ├── src/                          # 公共库实现，SDK 细节只在这里出现
 ├── apps/
 │   ├── read_motor_state.cpp      # 状态读取工具
-│   ├── sine_position_test.cpp    # 六电机正弦位置测试
+│   ├── sine_position_test.cpp    # 四电机正弦位置测试
 │   ├── gravity_compensation.cpp  # 重力补偿控制器
 │   ├── return_to_zero.cpp         # CSV 驱动的回零控制器
 │   └── cli_utils.hpp             # 两个工具共用的参数解析
 ├── tests/                        # C++ 和 Python 离线测试
 ├── docs/                         # 架构与运动规划说明
 ├── HANDOFF.md                    # 当前目标、进度、下一阶段和安全边界
-├── config/m8010_arm.yaml         # 六关节 ID、方向、零位和控制参数
+├── config/m8010_arm.yaml         # 四关节 ID、方向、零位和控制参数
 ├── description/                  # xacro/URDF 机械臂模型与可视网格
 ├── python/qmini_arm_motion/      # FK/IK/碰撞/规划/命令/动力学/可视化
 ├── python/qarm_sim/              # MuJoCo、遥测镜像和离线回零实验
 └── pyproject.toml
 ```
 
-应用只依赖 `qmini_arm_core` 的公开头文件，不直接使用 `MotorCmd`、`MotorData` 或 `SerialPort`。未来替换通信后端、增加仿真后端或 ROS 2 适配时，不需要改动 IK 和轨迹层。
+数学核心 `QminiArm::Core` 不依赖供应商 SDK；Linux 硬件应用通过 `QminiArm::Hardware`
+链接 `MotorBus`，不直接使用 `MotorCmd`、`MotorData` 或 `SerialPort`。未来替换通信后端、
+增加仿真后端或 ROS 2 适配时，不需要改动 IK 和轨迹层。
+
+四轴迁移后，旧六轴标定与 13 列轨迹不可复用。仓库控制模板已置为未标定，
+四轴真机运行前必须重新确认 ID、方向、编码器参考和桌面支撑姿态。
+
+macOS 或没有 SDK 的主机可直接运行离线 C++ 核心检查：
+
+```bash
+cmake -S . -B build-core -DQMINI_ARM_BUILD_APPS=OFF
+cmake --build build-core -j2
+ctest --test-dir build-core --output-on-failure
+```
 
 ## 平台支持
 
@@ -84,7 +97,7 @@ python3 -m venv .venv
 ```bash
 .venv/bin/ruff check python tests/python
 .venv/bin/pytest -q
-.venv/bin/qmini-motion fk --q-deg 0 0 0 0 0 0
+.venv/bin/qmini-motion fk --q-deg 0 0 0 0
 ```
 
 ### macOS：Python 离线层
@@ -167,8 +180,8 @@ Python 运动层采用“URDF 模型—阻尼最小二乘 IK—工作空间采�
 
 ```bash
 .venv/bin/qmini-motion plan \
-  --start-deg 0 0 0 0 0 0 \
-  --target 0.668 0.105 -0.163 \
+  --start-deg 0 0 0 0 \
+  --target 0.73 0.02 -0.04 \
   --output build/m8010_commands.csv
 ```
 
@@ -178,7 +191,7 @@ Python 运动层采用“URDF 模型—阻尼最小二乘 IK—工作空间采�
 .venv/bin/qmini-motion viz --host 127.0.0.1 --port 8080
 ```
 
-浏览器中可拖动目标点、规划并播放轨迹、显示无自碰撞可达空间，并实时查看 ID 0–5
+浏览器中可拖动目标点、规划并播放轨迹、显示无自碰撞可达空间，并实时查看 ID 0–3
 的关节目标、仿真角、跟踪误差、电机关节力矩、重力负载和转子侧命令。动力学使用 xacro
 中的质量/质心/惯量/阻尼/力矩与速度限制，重力在 `world` 中为 `-Z`。可视化和 CSV 导出均
 不会打开 `/dev/ttyUSB0`。
@@ -243,7 +256,7 @@ joint_tau_ideal_nm,temp_c,merror,mode,exchange_ms
 
 其中 `joint_tau_ideal_nm` 仅为 `tau_rotor_est_nm × 6.33` 的理想换算，没有考虑减速器效率、摩擦和结构载荷。
 
-## 六电机正弦位置测试
+## 四电机正弦位置测试
 
 先做不打开串口的轨迹检查：
 
@@ -256,7 +269,7 @@ joint_tau_ideal_nm,temp_c,merror,mode,exchange_ms
 ```bash
 ./build/qmini_sine_position \
   --port /dev/ttyUSB0 \
-  --ids 0,1,2,3,4,5 \
+  --ids 0,1,2,3 \
   --amplitude-deg 8 \
   --period-s 4 \
   --duration-s 12 \
@@ -267,9 +280,9 @@ joint_tau_ideal_nm,temp_c,merror,mode,exchange_ms
   --print-hz 20
 ```
 
-六台电机分别记录启动转子位置，然后共用同一个相对输出轴目标。RS-485 通信仍按 ID 顺序请求—应答，不是广播。任意一台出现通信错误、`merror`、超温、超速、超力矩估计或超行程时，程序终止轨迹并尝试让全部六台零输出。
+四台电机分别记录启动转子位置，然后共用同一个相对输出轴目标。RS-485 通信仍按 ID 顺序请求—应答，不是广播。任意一台出现通信错误、`merror`、超温、超速、超力矩估计或超行程时，程序终止轨迹并尝试让全部四台零输出。
 
-这个测试要求六台电机分别固定且空载。当前 `direction`、幅值和轨迹对所有 ID 相同，不能直接用于装配后的机械臂；真实机械臂必须先配置每个关节的 ID、方向、机械零位、软硬限位和不同轨迹。
+这个测试要求四台电机分别固定且空载。当前 `direction`、幅值和轨迹对所有 ID 相同，不能直接用于装配后的机械臂；真实机械臂必须先配置每个关节的 ID、方向、机械零位、软硬限位和不同轨迹。
 
 ## 用公共 API 开发
 
@@ -303,16 +316,16 @@ qmini_arm::JointState joint =
 - Python 规划层只处理自碰撞和关节限位；可视化已有初步重力/刚体动力学，但尚未处理
   地面接触、工装、线缆、末端负载、减速器效率和硬实时调度；
 - 可达空间点云是对连续工作空间的有限采样，不是解析边界或安全证明；
-- `config/m8010_arm.yaml` 默认未标定，绝对转子位置不会生成；完成六轴方向、机械零位
+- `config/m8010_arm.yaml` 默认未标定，绝对转子位置不会生成；完成四轴方向、机械零位
   和关节限位标定前，规划结果不得发送到真机；
 - 当前正弦程序是台架验证工具，不是机械臂控制器；
 - 进程、USB 或供电异常时无法保证最后的零输出命令送达，必须提供物理断电和机械限位。
 
-## MuJoCo 与六轴只读镜像
+## MuJoCo 与四轴只读镜像
 
 `qarm-sim` 保持 `description/qmini_arm.urdf.xacro` 为模型源，运行时展开并
 生成 MuJoCo 场景，保留 visual STL 和原生 cylinder/box collision，同时增加
-六个关节力矩执行器、`tool0` site、状态传感器和固定基座场景。执行器的峰值
+四个关节力矩执行器、`tool0` site、状态传感器和固定基座场景。执行器的峰值
 边界来自宇树官方 GO-M8010-6 参数；转子惯量、连续力矩、摩擦、齿隙和通信延迟
 仍明确保留为待辨识参数。
 
@@ -342,23 +355,22 @@ UV_CACHE_DIR=/private/tmp/qarm_uv_cache uv run qarm-sim inspect-stream \
 
 ### 在桌面支撑姿态标零
 
-完整 URDF 零位很难靠人稳定保持，因此采用照片确认过的桌面支撑姿态。该姿态
+完整 URDF 零位很难靠人稳定保持，因此提供四轴桌面支撑几何参考。新机构尚需现场确认，
+`config/calibration_pose.json` 的 `validated` 默认是 `false`。该姿态
 不是运行姿态；`joint_2` 在手动标零时超过软运行限位，但仍位于专门保留的
 `±1.75 rad` 硬限位内。程序直接使用
 当前 `base_pair.stl`、`arm_link.stl` 和 `motor.stl` 顶点重新解算；当前结果为：
 
 ```text
-motor ID / joint:       0       1          2         3     4       5
-reference angle deg:   0.0   +100.1540   +8.8698   -1.1489   0.0  -89.9544
+motor ID / joint:       0       1          2         3
+reference angle deg:   0.0   +100.1540   +8.8698   +0.0000
 ```
 
 - 第一根长臂 STL 与底板 STL 定义的桌面相切；
 - 远端 `motor.stl` 与同一桌面相切；
-- `joint_2/motor ID 1` 从照片操作侧逆时针约 `100.1540°`；该正支使
-  motor 4 朝上的水平解只需 `joint_4/motor ID 3≈-1.1489°`，不会使
-  joint_4 越过正常硬限位；
-- motor 5 从照片中的操作侧看，顺时针转到机械限位，对应 `joint_6` 的
-  URDF 下限 `-1.57 rad`。
+- `joint_2/motor ID 1≈100.1540°` 保留第一根长臂的桌面支撑条件；
+- `joint_3/motor ID 2≈8.8698°` 保留原第三轴几何标零角度；
+- `joint_4/motor ID 3=0°` 使用重构后机构要求的第四轴机械标零位置。
 
 可随时复算并检查 STL 误差：
 
@@ -381,7 +393,7 @@ UV_CACHE_DIR=/private/tmp/qarm_uv_cache uv run qarm-sim capture-zero \
 
 程序连续采集约 2 秒；任何电机无响应、报错，或任一关节位置跨度超过
 `0.01 rad` 都会拒绝写入。成功时会先备份 `config/joint_map.json`，再原子写入
-参考关节角、六轴零偏、转子零位、采样稳定性、UTC 时间和开发板 boot ID。
+参考关节角、四轴零偏、转子零位、采样稳定性、UTC 时间和开发板 boot ID。
 标零绑定当前上电
 周期，开发板或电机重新上电后必须重新采集。
 
@@ -389,9 +401,9 @@ UV_CACHE_DIR=/private/tmp/qarm_uv_cache uv run qarm-sim capture-zero \
 `q=q_ref+direction·(encoder-encoder_ref)` 映射；之后修正 `direction` 不需要
 重新摆标定姿态。派生的 `zero_offset_rad` 仅用于兼容和诊断。
 
-本次标零后已逐轴转动并确认实机与 MuJoCo 方向一致，`joint_map.json` 已记录
-`direction_calibrated=true`。它仍不会自动把 `m8010_arm.yaml` 中的运动规划命令
-标记为可下发，避免重力补偿部署意外扩大成轨迹控制授权。
+四轴改造后，`joint_map.json` 中的零位、方向和综合标定标记均已失效，旧六轴编码器捕获
+不能沿用。完成新捕获并逐轴确认实机与 MuJoCo 方向后再更新标定标记；它不会自动把
+`m8010_arm.yaml` 中的运动规划命令标记为可下发。
 
 标零后启动实时 MuJoCo 镜像：
 
@@ -408,14 +420,16 @@ sim-to-real 精度。
 
 ## 开发板重力补偿
 
-开发板已安装用户态命令：
+四轴控制器需要重新构建并部署，目标用户态命令为：
 
 ```text
 ~/.local/bin/qmini-gravity
 ```
 
-运行配置位于 `~/.config/qarm/gravity_comp.conf`，并绑定本次标零的开发板
-boot ID、六轴转子参考位置、ID 顺序和方向。程序直接使用与 MuJoCo
+运行配置位于 `~/.config/qarm/gravity_comp.conf`。仓库模板使用 schema 3、
+`calibration_confirmed=false` 和占位转子值；`--dry-run` 可用，硬件模式会在打开串口前拒绝。
+现场重新标定后，配置必须绑定本次开发板 boot ID、四轴转子参考位置、ID 顺序和方向，
+再设置 `calibration_confirmed=true`。schema 2 的旧部署配置会被拒绝。程序直接使用与 MuJoCo
 `qfrc_bias(q, qvel=0)` 同符号的静态保持力矩，并按功率守恒换算到转子侧：
 
 ```text
@@ -448,11 +462,10 @@ qmini-gravity --enable-foc \
 
 FOC 模式启动前要求五轮完整反馈、当前 boot ID、所有关节在软限位内且离边界至少
 `0.05 rad`。当前最大模型 scale 为 100%，逐轴转子力矩限幅为
-`[0.03, 2.00, 0.90, 0.08, 0.03, 0.03] N·m`；离线扫描的软限位内最大模型请求约为
-`[0.0016, 1.9967, 0.8773, 0.0716, 0.0014, 0.0005] N·m`，因此不会把正常的 100%
-模型请求截成较低比例，日志中的 `saturated=1` 仍会显示 slew 或异常限幅。逐轴关节
-速度软保护为 `[0.80, 0.80, 0.80, 1.20, 2.00, 2.50] rad/s`，连续三帧才退出；
-硬保护为 `[1.50, 1.50, 1.50, 2.40, 4.00, 5.00] rad/s`，单帧立即退出。超速故障
+`[0.03, 2.00, 0.90, 0.08] N·m`。这些是保留的保守限幅，尚未经四轴实机验证；
+日志中的 `saturated=1` 会显示 slew 或限幅。逐轴关节
+速度软保护为 `[0.80, 0.80, 0.80, 1.20] rad/s`，连续三帧才退出；
+硬保护为 `[1.50, 1.50, 1.50, 2.40] rad/s`，单帧立即退出。超速故障
 会打印实测值、阈值和保护类型。控制器还包含 100 Hz 循环、阻尼、力矩 slew、
 温度/错误码/反馈/50 ms 调度看门狗。正常 12 秒实验为 3 秒渐入、6 秒观察、
 3 秒渐出，再确认零力矩 FOC 并切回 BRAKE；故障路径立即尝试 BRAKE。SSH 断开
@@ -470,14 +483,14 @@ FOC 模式启动前要求五轮完整反馈、当前 boot ID、所有关节在�
 ## 回到桌面支撑标定位
 
 下电前的“回零”目标是桌面支撑标定姿态，而不是数学上的
-`q=[0,0,0,0,0,0]`。它包含 `joint_2=100.154°` 和 `joint_6=-90°`，位于正常
+`q=[0,0,0,0]`。它包含 `joint_2=100.154°`，位于正常
 运行软限位之外，但位于 URDF 硬限位内；只有机械臂沿轨迹回到桌面后才允许安全下电。
 回零分成离线规划/验证和实机执行两步。先在本机用同一份 URDF、碰撞检查器和 MuJoCo
-生成轨迹；`plan-home` 的 `--start-deg` 必须填写当前六个关节角：
+生成轨迹；`plan-home` 的 `--start-deg` 必须填写当前四个关节角：
 
 ```bash
 UV_CACHE_DIR=/private/tmp/qarm_uv_cache uv run qarm-sim plan-home \
-  --start-deg 10 5 10 5 -5 5 \
+  --start-deg 10 5 10 5 \
   --output build/calibration_home.csv
 ```
 
@@ -485,23 +498,24 @@ UV_CACHE_DIR=/private/tmp/qarm_uv_cache uv run qarm-sim plan-home \
 
 ```bash
 UV_CACHE_DIR=/private/tmp/qarm_uv_cache uv run qarm-sim plan-urdf-zero \
-  --start-deg 10 5 10 5 -5 5 \
+  --start-deg 10 5 10 5 \
   --output build/urdf_zero.csv
 ```
 
 该命令只做离线计算，不访问 SSH/串口。规划器先检查起点、零位和完整路径的 URDF
 自碰撞，必要时使用 RRT-Connect 绕开碰撞；随后用五次曲线限制到 `0.25 rad/s`、
 `0.50 rad/s²` 和 `10 ms` 控制周期。命令会再用 MuJoCo 闭环实验复现 M8010 的
-位置/速度控制、100% 重力前馈、Q8 力矩量化、已部署力矩帽和假设的
+位置/速度控制、100% 重力前馈、Q8 力矩量化、模板力矩帽和假设的
 `0.001 kg·m²` 反射关节惯量；除预期的桌面接触外，只有无自碰撞、无硬限位越界、无
 力矩饱和、速度和跟踪误差均通过，且终点检测到桌面接触时才写出 CSV。这个惯量仍未
 由实机辨识，MuJoCo 结果不能替代现场慢速验证。
 
-开发板上的受保护执行器为 `~/.local/bin/qmini-return-home`。它只接受上述 13 列关节
-轨迹 CSV，不接受任意电机目标；启动前会重新读取六轴 BRAKE 反馈，确认当前关节角
-与轨迹首帧相差不超过 `0.03 rad`，检查标定 boot ID、ID 0--5、速度/温度/反馈和
+开发板上的受保护执行器为 `~/.local/bin/qmini-return-home`。它只接受上述 9 列关节
+轨迹 CSV（时间、四个位置、四个速度），旧 13 列轨迹会被拒绝；启动前会重新读取四轴
+BRAKE 反馈，确认当前关节角与轨迹首帧相差不超过 `0.03 rad`，检查标定 boot ID、
+ID 0--3、速度/温度/反馈和
 活动限位（回标定位阶段允许进入已声明的硬限位区），然后按轨迹发送带绝对转子位置、速度、位置增益、阻尼和 100% 重力前馈的
-FOC 帧。故障或中断先尝试六轴 BRAKE，正常结束也先 BRAKE 再打印日志。
+FOC 帧。故障或中断先尝试四轴 BRAKE，正常结束也先 BRAKE 再打印日志。
 手动拖动的放宽阈值只作用于重力补偿；回标定位执行器仍使用更严格的逐轴速度保护，
 其规划速度上限保持 `0.25 rad/s`。
 BRAKE→FOC 的前三帧单独处理 SDK 模式切换速度瞬态：首帧位置目标设为刚读取的实测

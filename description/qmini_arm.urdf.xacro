@@ -14,14 +14,10 @@
   <xacro:property name="joint_2_limit" value="1.75"/>
   <xacro:property name="joint_3_limit" value="2.62"/>
   <xacro:property name="joint_4_limit" value="2.094395102"/>
-  <xacro:property name="joint_5_limit" value="2.094395102"/>
-  <xacro:property name="joint_6_limit" value="1.57"/>
   <xacro:property name="joint_1_soft_limit" value="2.967059728"/>
   <xacro:property name="joint_2_soft_limit" value="1.57"/>
   <xacro:property name="joint_3_soft_limit" value="2.007128640"/>
   <xacro:property name="joint_4_soft_limit" value="2.0"/>
-  <xacro:property name="joint_5_soft_limit" value="2.007128640"/>
-  <xacro:property name="joint_6_soft_limit" value="1.5"/>
   <xacro:property name="effort_limit" value="23.7"/>
   <xacro:property name="velocity_limit" value="3.0"/>
 
@@ -185,51 +181,7 @@
       rpy="-1.570796327 -0.117425510 1.570796327"/>
   </link>
 
-  <!-- Output of motor 4: third orthogonal bracket and motor 6 housing. -->
-  <link name="link_4">
-    <xacro:inertial_block
-      mass="0.567450400" xyz="0.076904739 -0.000544010 -0.000695119"
-      ixx="0.000383931992" ixy="0.000001966003" ixz="0.000001138033"
-      iyy="0.000587346863" iyz="0.000135972895" izz="0.000620142776"/>
-    <xacro:mesh_visual
-      file="joint_bracket.stl"
-      xyz="0.021150004 0.000000013 -0.000000002"
-      rpy="0 -0.726682211 -1.570796327" material="link_silver"/>
-    <xacro:mesh_visual
-      file="motor.stl"
-      xyz="0.082449884 0.000464880 0.000523357"
-      rpy="-0.844107722 0.844114116 -1.570796327" material="motor_gray"/>
-    <xacro:box_collision
-      xyz="0.041150004 0.000000013 -0.000000002"
-      rpy="0 -0.726682211 -1.570796327" size="0.09 0.04 0.043"/>
-    <xacro:motor_collision
-      xyz="0.082449884 0.000464880 0.000523357"
-      rpy="-2.555167957 0.457182902 2.555159401"/>
-  </link>
-
-  <!-- Output of motor 6: wrist bracket and motor 5 housing. -->
-  <link name="link_5">
-    <xacro:inertial_block
-      mass="0.567450400" xyz="0.078231092 0.000626505 0.000621803"
-      ixx="0.000383932001" ixy="-0.000003118004" ixz="-0.000001903156"
-      iyy="0.000586939761" iyz="0.000136055814" izz="0.000618330028"/>
-    <xacro:mesh_visual
-      file="joint_bracket.stl"
-      xyz="0.022650004 0.000000013 -0.000000002"
-      rpy="3.141592654 0.726682211 1.570796327" material="link_silver"/>
-    <xacro:mesh_visual
-      file="motor.stl"
-      xyz="0.083950124 -0.000465277 -0.000522985"
-      rpy="-0.844107722 -0.844114116 1.570796327" material="motor_gray"/>
-    <xacro:box_collision
-      xyz="0.042650004 0.000000013 -0.000000002"
-      rpy="3.141592654 0.726682211 1.570796327" size="0.09 0.04 0.043"/>
-    <xacro:motor_collision
-      xyz="0.083950124 -0.000465277 -0.000522985"
-      rpy="-0.586424697 0.457182902 0.586433252"/>
-  </link>
-
-  <!-- Output of motor 5: end-effector mounting bracket. -->
+  <!-- Fixed end-effector mounting bracket attached to motor 4 output. -->
   <link name="link_6">
     <xacro:inertial_block
       mass="0.016653600" xyz="0.021295905 -0.013071630 0.011629218"
@@ -261,20 +213,10 @@
     rpy="1.453370820 0 -3.141592654"
     limit="${joint_3_limit}" soft_limit="${joint_3_soft_limit}"/>
   <xacro:arm_joint
-    name="joint_4" parent="link_3" child="link_4"
+    name="joint_4" parent="link_3" child="link_6"
     xyz="0.013000008 -0.224214968 0.199318367"
-    rpy="1.45178 0 -3.141592654"
+    rpy="-1.68822 0 -3.141592654"
     limit="${joint_4_limit}" soft_limit="${joint_4_soft_limit}"/>
-  <xacro:arm_joint
-    name="joint_5" parent="link_4" child="link_5"
-    xyz="0.082449884 0.000464880 0.000523357"
-    rpy="-0.844107722 0.844114116 -1.570796327"
-    limit="${joint_5_limit}" soft_limit="${joint_5_soft_limit}"/>
-  <xacro:arm_joint
-    name="joint_6" parent="link_5" child="link_6"
-    xyz="0.083950124 -0.000465277 -0.000522985"
-    rpy="0.7259 -0.844114116 1.570796327"
-    limit="${joint_6_limit}" soft_limit="${joint_6_soft_limit}"/>
 
   <joint name="tool0_fixed_joint" type="fixed">
     <origin

@@ -160,75 +160,7 @@
       </geometry>
     </collision>
   </link>
-  <!-- Output of motor 4: third orthogonal bracket and motor 6 housing. -->
-  <link name="link_4">
-    <inertial>
-      <origin rpy="0 0 0" xyz="0.076904739 -0.000544010 -0.000695119"/>
-      <mass value="0.5674504"/>
-      <inertia ixx="0.000383931992" ixy="1.966003e-06" ixz="1.138033e-06" iyy="0.000587346863" iyz="0.000135972895" izz="0.000620142776"/>
-    </inertial>
-    <visual>
-      <origin rpy="0 -0.726682211 -1.570796327" xyz="0.021150004 0.000000013 -0.000000002"/>
-      <geometry>
-        <mesh filename="meshes/visual/joint_bracket.stl"/>
-      </geometry>
-      <material name="link_silver"/>
-    </visual>
-    <visual>
-      <origin rpy="-0.844107722 0.844114116 -1.570796327" xyz="0.082449884 0.000464880 0.000523357"/>
-      <geometry>
-        <mesh filename="meshes/visual/motor.stl"/>
-      </geometry>
-      <material name="motor_gray"/>
-    </visual>
-    <collision>
-      <origin rpy="0 -0.726682211 -1.570796327" xyz="0.041150004 0.000000013 -0.000000002"/>
-      <geometry>
-        <box size="0.09 0.04 0.043"/>
-      </geometry>
-    </collision>
-    <collision>
-      <origin rpy="-2.555167957 0.457182902 2.555159401" xyz="0.082449884 0.000464880 0.000523357"/>
-      <geometry>
-        <cylinder length="0.0423" radius="0.04825"/>
-      </geometry>
-    </collision>
-  </link>
-  <!-- Output of motor 6: wrist bracket and motor 5 housing. -->
-  <link name="link_5">
-    <inertial>
-      <origin rpy="0 0 0" xyz="0.078231092 0.000626505 0.000621803"/>
-      <mass value="0.5674504"/>
-      <inertia ixx="0.000383932001" ixy="-3.118004e-06" ixz="-1.903156e-06" iyy="0.000586939761" iyz="0.000136055814" izz="0.000618330028"/>
-    </inertial>
-    <visual>
-      <origin rpy="3.141592654 0.726682211 1.570796327" xyz="0.022650004 0.000000013 -0.000000002"/>
-      <geometry>
-        <mesh filename="meshes/visual/joint_bracket.stl"/>
-      </geometry>
-      <material name="link_silver"/>
-    </visual>
-    <visual>
-      <origin rpy="-0.844107722 -0.844114116 1.570796327" xyz="0.083950124 -0.000465277 -0.000522985"/>
-      <geometry>
-        <mesh filename="meshes/visual/motor.stl"/>
-      </geometry>
-      <material name="motor_gray"/>
-    </visual>
-    <collision>
-      <origin rpy="3.141592654 0.726682211 1.570796327" xyz="0.042650004 0.000000013 -0.000000002"/>
-      <geometry>
-        <box size="0.09 0.04 0.043"/>
-      </geometry>
-    </collision>
-    <collision>
-      <origin rpy="-0.586424697 0.457182902 0.586433252" xyz="0.083950124 -0.000465277 -0.000522985"/>
-      <geometry>
-        <cylinder length="0.0423" radius="0.04825"/>
-      </geometry>
-    </collision>
-  </link>
-  <!-- Output of motor 5: end-effector mounting bracket. -->
+  <!-- Fixed end-effector mounting bracket attached to motor 4 output. -->
   <link name="link_6">
     <inertial>
       <origin rpy="0 0 0" xyz="0.021295905 -0.013071630 0.011629218"/>
@@ -278,31 +210,13 @@
     <safety_controller k_position="20.0" k_velocity="2.0" soft_lower_limit="-2.00712864" soft_upper_limit="2.00712864"/>
   </joint>
   <joint name="joint_4" type="revolute">
-    <origin rpy="1.45178 0 -3.141592654" xyz="0.013000008 -0.224214968 0.199318367"/>
+    <origin rpy="-1.68822 0 -3.141592654" xyz="0.013000008 -0.224214968 0.199318367"/>
     <parent link="link_3"/>
-    <child link="link_4"/>
+    <child link="link_6"/>
     <axis xyz="1 0 0"/>
     <limit effort="23.7" lower="-2.094395102" upper="2.094395102" velocity="3.0"/>
     <dynamics damping="0.08" friction="0.0"/>
     <safety_controller k_position="20.0" k_velocity="2.0" soft_lower_limit="-2.0" soft_upper_limit="2.0"/>
-  </joint>
-  <joint name="joint_5" type="revolute">
-    <origin rpy="-0.844107722 0.844114116 -1.570796327" xyz="0.082449884 0.000464880 0.000523357"/>
-    <parent link="link_4"/>
-    <child link="link_5"/>
-    <axis xyz="1 0 0"/>
-    <limit effort="23.7" lower="-2.094395102" upper="2.094395102" velocity="3.0"/>
-    <dynamics damping="0.08" friction="0.0"/>
-    <safety_controller k_position="20.0" k_velocity="2.0" soft_lower_limit="-2.00712864" soft_upper_limit="2.00712864"/>
-  </joint>
-  <joint name="joint_6" type="revolute">
-    <origin rpy="0.7259 -0.844114116 1.570796327" xyz="0.083950124 -0.000465277 -0.000522985"/>
-    <parent link="link_5"/>
-    <child link="link_6"/>
-    <axis xyz="1 0 0"/>
-    <limit effort="23.7" lower="-1.57" upper="1.57" velocity="3.0"/>
-    <dynamics damping="0.08" friction="0.0"/>
-    <safety_controller k_position="20.0" k_velocity="2.0" soft_lower_limit="-1.5" soft_upper_limit="1.5"/>
   </joint>
   <joint name="tool0_fixed_joint" type="fixed">
     <origin rpy="-3.141592653 -0.726675817 -1.570796327" xyz="0.008650004 -0.044843211 0.039863329"/>

@@ -1,0 +1,61 @@
+{
+  "version": 1,
+  "created_utc": "2026-09-07T07:01:20.720217+00:00",
+  "model": "opencv_pinhole_5",
+  "opencv_version": "4.14.0",
+  "image_size": [
+    1280,
+    720
+  ],
+  "focus_absolute": 501,
+  "fourcc": "MJPG",
+  "board": {
+    "cols": 10,
+    "rows": 7,
+    "square_mm": 15.0
+  },
+  "camera_matrix": [
+    [
+      632.5606972088891,
+      0.0,
+      663.0647213139038
+    ],
+    [
+      0.0,
+      630.7623442038589,
+      352.0193814855329
+    ],
+    [
+      0.0,
+      0.0,
+      1.0
+    ]
+  ],
+  "distortion_coefficients": [
+    -0.0022411757776550907,
+    0.02805805688846632,
+    0.00029680509898618755,
+    -0.00011864722516469111,
+    -0.023654174167849058
+  ],
+  "distortion_order": [
+    "k1",
+    "k2",
+    "p1",
+    "p2",
+    "k3"
+  ],
+  "rms_px": 0.2750679190864034,
+  "accepted_for_robot_control": false,
+  "camera_model": "LRCP20680",
+  "usb_vid_pid": "0bda:3035",
+  "autofocus_enabled": false,
+  "quality_summary": {
+    "training_images": 35,
+    "validation_images": 11,
+    "validation_rms_px": 0.24596658875425442,
+    "corner_hull_coverage": 0.6416763423300914,
+    "max_board_normal_angle_deg": 82.19593031990728,
+    "assessment": "preliminary_intrinsic_calibration_passed; grasp_accuracy_not_verified"
+  }
+}

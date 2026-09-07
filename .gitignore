@@ -10,6 +10,12 @@ __pycache__/
 *.npz
 *.csv
 /runs/
+
+# Local camera tooling and raw calibration outputs; only curated configs are versioned.
+/config/camera/generated/
+/python/qmini_arm_vision/
+/tests/python/test_camera_calibration.py
+/docs/camera_calibration.md
 # Vendor SDK is kept outside this repository (or as a local working copy at
 # this path) and is resolved by cmake/UnitreeActuatorSDK.cmake.
 /unitree_actuator_sdk/

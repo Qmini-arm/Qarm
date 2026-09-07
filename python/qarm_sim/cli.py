@@ -3,7 +3,6 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import shlex
 import subprocess
 import sys
 import sysconfig
@@ -28,7 +27,8 @@ from qarm_sim.telemetry import (
     map_joint_state,
 )
 
-DEFAULT_REMOTE_READER = "/home/HwHiAiUser/.local/libexec/qarm/m8010_readonly"
+DEFAULT_READER = str(Path.home() / ".local/libexec/qarm/m8010_readonly")
+LOCAL_BOOT_ID = Path("/proc/sys/kernel/random/boot_id")
 HOME_CONTROL_PERIOD_S = 0.01
 HOME_VELOCITY_LIMIT_RAD_S = 0.25
 HOME_ACCELERATION_LIMIT_RAD_S2 = 0.50
@@ -153,15 +153,18 @@ def _motion_model_arguments(parser: argparse.ArgumentParser) -> None:
 
 
 def _telemetry_arguments(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--ssh-target", default="HwHiAiUser@192.168.10.102")
     parser.add_argument("--device", default="/dev/ttyUSB0")
-    parser.add_argument("--remote-reader", default=DEFAULT_REMOTE_READER)
+    parser.add_argument(
+        "--reader",
+        default=DEFAULT_READER,
+        help="path to the local m8010_readonly reader on this board",
+    )
     parser.add_argument("--joint-map", type=Path, default=DEFAULT_JOINT_MAP)
     parser.add_argument(
         "--record",
         type=Path,
         default=None,
-        help="append raw remote NDJSON to this path",
+        help="append raw reader NDJSON to this path",
     )
     parser.add_argument(
         "--acknowledge-supported-arm",
@@ -173,54 +176,40 @@ def _telemetry_arguments(parser: argparse.ArgumentParser) -> None:
     )
 
 
-def _remote_command(args: argparse.Namespace) -> list[str]:
-    acknowledge = " --acknowledge-state-change" if args.acknowledge_supported_arm else ""
+def _reader_command(args: argparse.Namespace) -> list[str]:
     mapping = JointMap.load(args.joint_map)
     motor_ids = ",".join(str(int(value)) for value in mapping.motor_ids_by_joint)
-    command = (
-        f"{shlex.quote(args.remote_reader)} --device {shlex.quote(args.device)} "
-        f"--ids {motor_ids} --mode brake --rate 100"
-        f"{acknowledge}"
-    )
-    return [
-        "ssh",
-        "-o",
-        "BatchMode=yes",
-        "-o",
-        "ConnectTimeout=5",
-        args.ssh_target,
-        command,
+    command = [
+        args.reader,
+        "--device",
+        args.device,
+        "--ids",
+        motor_ids,
+        "--mode",
+        "brake",
+        "--rate",
+        "100",
     ]
+    if args.acknowledge_supported_arm:
+        command.append("--acknowledge-state-change")
+    return command
 
 
-def _remote_boot_id(ssh_target: str) -> str:
-    completed = subprocess.run(
-        [
-            "ssh",
-            "-o",
-            "BatchMode=yes",
-            "-o",
-            "ConnectTimeout=5",
-            ssh_target,
-            "cat /proc/sys/kernel/random/boot_id",
-        ],
-        check=False,
-        capture_output=True,
-        text=True,
-        timeout=8,
-    )
-    value = completed.stdout.strip()
-    if completed.returncode != 0 or not value:
-        message = completed.stderr.strip() or f"exit {completed.returncode}"
-        raise TelemetryError(f"cannot read remote board boot ID: {message}")
+def _local_boot_id(boot_id_path: Path = LOCAL_BOOT_ID) -> str:
+    try:
+        value = boot_id_path.read_text(encoding="utf-8").strip()
+    except OSError as error:
+        raise TelemetryError(f"cannot read local board boot ID: {error}") from error
+    if not value:
+        raise TelemetryError("cannot read local board boot ID: empty value")
     return value
 
 
-def _verify_calibration_boot(mapping: JointMap, ssh_target: str) -> None:
+def _verify_calibration_boot(mapping: JointMap) -> None:
     expected = mapping.calibration_board_boot_id
     if not mapping.zero_calibrated or expected is None:
         return
-    actual = _remote_boot_id(ssh_target)
+    actual = _local_boot_id()
     if actual != expected:
         raise TelemetryError(
             "saved zero belongs to a different board boot; recapture the URDF "
@@ -546,9 +535,9 @@ def command_viewer(args: argparse.Namespace) -> int:
 
 def command_inspect_stream(args: argparse.Namespace) -> int:
     mapping = JointMap.load(args.joint_map)
-    _verify_calibration_boot(mapping, args.ssh_target)
+    _verify_calibration_boot(mapping)
     count = 0
-    with SubprocessTelemetry(_remote_command(args), record_path=args.record) as telemetry:
+    with SubprocessTelemetry(_reader_command(args), record_path=args.record) as telemetry:
         while count < args.samples:
             sample = telemetry.latest(timeout=3.0)
             state = map_joint_state(sample, mapping)
@@ -589,9 +578,9 @@ def command_capture_zero(args: argparse.Namespace) -> int:
     mapping = JointMap.load(args.joint_map)
     motor = MotorParameters.load()
     reference = solve_table_supported_pose(build_scene(mapping=mapping)).joint_position_rad
-    board_boot_id = _remote_boot_id(args.ssh_target)
+    board_boot_id = _local_boot_id()
     samples = []
-    with SubprocessTelemetry(_remote_command(args), record_path=args.record) as telemetry:
+    with SubprocessTelemetry(_reader_command(args), record_path=args.record) as telemetry:
         while len(samples) < args.samples:
             samples.append(telemetry.latest(timeout=3.0))
     estimate = estimate_zero(
@@ -635,7 +624,7 @@ def command_mirror(args: argparse.Namespace) -> int:
     import mujoco.viewer
 
     mapping = JointMap.load(args.joint_map)
-    _verify_calibration_boot(mapping, args.ssh_target)
+    _verify_calibration_boot(mapping)
     motor = MotorParameters.load()
     scene = build_scene(mapping=mapping, motor=motor)
     record = args.record
@@ -644,7 +633,7 @@ def command_mirror(args: argparse.Namespace) -> int:
     last_sequence = -1
     last_sample_at = started
     stale_reported = False
-    with SubprocessTelemetry(_remote_command(args), record_path=record) as telemetry:
+    with SubprocessTelemetry(_reader_command(args), record_path=record) as telemetry:
         first = telemetry.latest(timeout=5.0)
         state = map_joint_state(first, mapping)
         set_mirrored_state(scene, state.position, state.velocity)

@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import csv
 import json
+from pathlib import Path
 
 import mujoco
 import numpy as np
 import pytest
-from qarm_sim.cli import _parser, _remote_command, main
+from qarm_sim.cli import _local_boot_id, _parser, _reader_command, main
 from qarm_sim.config import DEFAULT_JOINT_MAP
 from qarm_sim.model import build_scene, set_mirrored_state
 from qarm_sim.motion import OfflineMotion, write_joint_trajectory_csv
@@ -20,13 +21,53 @@ def test_fk_rejects_stale_six_axis_vector(entrypoint, error_code, capsys) -> Non
     assert "requires 4 joint angles" in capsys.readouterr().err
 
 
-def test_remote_reader_uses_only_configured_motor_ids(tmp_path) -> None:
+def test_local_reader_uses_only_configured_motor_ids(tmp_path) -> None:
     raw = json.loads(DEFAULT_JOINT_MAP.read_text())
     raw["motor_ids_by_joint"] = [3, 7, 9, 12]
     path = tmp_path / "joint_map.json"
     path.write_text(json.dumps(raw))
     args = _parser().parse_args(["inspect-stream", "--joint-map", str(path)])
-    assert "--ids 3,7,9,12 --mode brake" in _remote_command(args)[-1]
+    command = _reader_command(args)
+    assert command[0] == str(Path.home() / ".local/libexec/qarm/m8010_readonly")
+    assert command[command.index("--ids") + 1] == "3,7,9,12"
+
+
+def test_local_reader_runs_directly_and_uses_reader_path(tmp_path) -> None:
+    raw = json.loads(DEFAULT_JOINT_MAP.read_text())
+    raw["motor_ids_by_joint"] = [3, 7, 9, 12]
+    path = tmp_path / "joint_map.json"
+    path.write_text(json.dumps(raw))
+
+    args = _parser().parse_args(
+        [
+            "inspect-stream",
+            "--reader",
+            "/opt/qarm/m8010_readonly",
+            "--joint-map",
+            str(path),
+            "--acknowledge-supported-arm",
+        ]
+    )
+
+    assert _reader_command(args) == [
+        "/opt/qarm/m8010_readonly",
+        "--device",
+        "/dev/ttyUSB0",
+        "--ids",
+        "3,7,9,12",
+        "--mode",
+        "brake",
+        "--rate",
+        "100",
+        "--acknowledge-state-change",
+    ]
+
+
+def test_local_boot_id_reads_supplied_proc_file(tmp_path) -> None:
+    boot_id = tmp_path / "boot_id"
+    boot_id.write_text("board-boot-id\n")
+
+    assert _local_boot_id(boot_id) == "board-boot-id"
 
 
 def test_joint_csv_rejects_legacy_velocity_width_before_writing(tmp_path) -> None:

@@ -25,14 +25,14 @@ npm run dev
 控制页的关节角度区可以切换到 Viser 模型视图。先在另一个终端启动 Qarm Viser：
 
 ```bash
-# 仓库根目录
-UV_CACHE_DIR=/private/tmp/qarm_uv_cache uv run qmini-motion viz --host 127.0.0.1 --port 8080
+# 仓库根目录；使用工作区虚拟环境
+.venv/bin/qmini-motion viz --host 127.0.0.1 --port 8080
 ```
 
-默认 iframe 地址为 `http://127.0.0.1:8080`。如果 Viser 在另一台机器或端口：
+默认 iframe 地址为 `http://127.0.0.1:8080`。如果本机使用其他端口：
 
 ```bash
-VITE_VISER_URL=http://192.168.10.102:8080 npm run dev
+VITE_VISER_URL=http://127.0.0.1:8080 npm run dev
 ```
 
 仿真由控制服务提供。后端离线或拒绝动作时，网页保留失败状态，不会自动切换到浏览器内模拟成功。
@@ -57,30 +57,21 @@ JSON 必须包含 `version: 1`、准确的 `joint_names` 和 `nodes`；六维旧
 离线验证：
 
 ```bash
-uv run pytest platform/server/test_qarm_control_server.py
+.venv/bin/pytest -q platform/server/test_qarm_control_server.py
 npm --prefix platform run build
 ```
 
 ## 在开发板上运行
 
-平台服务可以和网页静态文件一起部署到开发板；浏览器只需访问开发板地址，电脑上不需要
-启动 Node/Vite：
+开发环境就是开发板时，直接在工作区构建并启动：
 
 ```bash
-# 在开发电脑执行（默认 HwHiAiUser@192.168.10.102）
+# 在开发板工作区根目录执行；脚本只做本地构建
 ./platform/deploy_board.sh --no-start
 
-# SSH 到板端启动。QARM_HARDWARE=1 启用四轴反馈能力；浏览器连接后开始 BRAKE 轮询。
-# 未安装真实执行器时，
-# 使能、重力补偿和 MOVEJ 会明确返回 501，不会伪报成功。
-ssh HwHiAiUser@192.168.10.102 \
-  'cd ~/qarm-platform && QARM_HARDWARE=1 QARM_PLATFORM_PORT=8090 \
-   ./platform/run_server.sh'
+# 本地启动硬件反馈服务（QARM_HARDWARE=1 才打开串口）
+QARM_HARDWARE=1 .venv/bin/python platform/server/qarm_control_server.py
 ```
 
-然后打开 <http://192.168.10.102:8090/>。`deploy_board.sh` 会在本地构建 React bundle，
-复制 `platform/dist`、控制服务、URDF、关节映射与参考姿态；板端只需要 Python 3.10+。
-部署脚本不会复制旧的 `build/calibration_home.csv`。可用环境变量覆盖目标：
-`QARM_BOARD_HOST`、`QARM_BOARD_USER`、`QARM_BOARD_ROOT`。如需在板端运行 Viser，另行启动
-`qmini-motion viz --host 0.0.0.0 --port 8080`，并在构建时设置
-`VITE_VISER_URL=http://192.168.10.102:8080`。
+然后在板端浏览器打开 <http://127.0.0.1:8090/>。`--no-start` 只构建网页资源，随后
+需要在同一工作区启动服务；不带 `--no-start` 时脚本会直接启动硬件模式服务。

@@ -25,9 +25,11 @@ from typing import Any
 ROOT = Path(__file__).resolve().parents[2]
 PORT = int(os.environ.get("QARM_PLATFORM_PORT", "8090"))
 HARDWARE = os.environ.get("QARM_HARDWARE", "0") == "1"
-READER = os.environ.get("QARM_READER", "/home/HwHiAiUser/.local/libexec/qarm/m8010_readonly")
-RETURN_HOME = os.environ.get("QARM_RETURN_HOME", "/home/HwHiAiUser/.local/bin/qmini-return-home")
-GRAVITY = os.environ.get("QARM_GRAVITY", "/home/HwHiAiUser/.local/bin/qmini-gravity")
+LOCAL_LIBEXEC = Path.home() / ".local/libexec/qarm"
+LOCAL_BIN = Path.home() / ".local/bin"
+READER = os.environ.get("QARM_READER", str(LOCAL_LIBEXEC / "m8010_readonly"))
+RETURN_HOME = os.environ.get("QARM_RETURN_HOME", str(LOCAL_BIN / "qmini-return-home"))
+GRAVITY = os.environ.get("QARM_GRAVITY", str(LOCAL_BIN / "qmini-gravity"))
 CONFIG = Path(os.environ.get("QARM_CONFIG", str(ROOT / "config" / "joint_map.json")))
 URDF = Path(os.environ.get("QARM_URDF", str(ROOT / "description" / "qmini_arm.urdf")))
 CALIBRATION_POSE = Path(

@@ -64,11 +64,15 @@ if(QMINI_ARM_BUILD_APPS)
   target_link_libraries(qmini_return_to_zero PRIVATE QminiArm::Hardware)
   target_compile_options(qmini_return_to_zero PRIVATE -Wall -Wextra -Wpedantic)
 
+  add_executable(m8010_readonly tools/m8010_readonly.cpp)
+  target_link_libraries(m8010_readonly PRIVATE Unitree::ActuatorSDK)
+  target_compile_options(m8010_readonly PRIVATE -Wall -Wextra -Wpedantic)
+
   # The Unitree SDK is a prebuilt shared library. Keep build-tree executables
   # runnable without copying or modifying anything in the SDK repository.
   set_target_properties(
     qmini_motor_state qmini_sine_position qmini_gravity_comp
-    qmini_return_to_zero PROPERTIES
+    qmini_return_to_zero m8010_readonly PROPERTIES
     BUILD_RPATH "${UNITREE_ACTUATOR_SDK_LIBRARY_DIR}"
   )
   set_target_properties(qmini_gravity_comp PROPERTIES
@@ -77,8 +81,13 @@ if(QMINI_ARM_BUILD_APPS)
   set_target_properties(qmini_return_to_zero PROPERTIES
     INSTALL_RPATH "\$ORIGIN/lib"
   )
-  install(TARGETS qmini_gravity_comp qmini_return_to_zero
+  set_target_properties(m8010_readonly PROPERTIES
+    INSTALL_RPATH "\$ORIGIN/lib"
+  )
+  install(TARGETS qmini_gravity_comp qmini_return_to_zero m8010_readonly
           RUNTIME DESTINATION libexec/qarm)
+  install(PROGRAMS tools/qmini-gravity tools/qmini-return-home
+          DESTINATION bin)
   install(FILES "${UNITREE_ACTUATOR_SDK_LIBRARY}"
           DESTINATION libexec/qarm/lib)
 endif()
@@ -96,6 +105,7 @@ if(BUILD_TESTING AND QMINI_ARM_BUILD_TESTS)
     add_test(NAME sine_dry_run COMMAND qmini_sine_position --dry-run)
     add_test(NAME gravity_help COMMAND qmini_gravity_comp --help)
     add_test(NAME return_to_zero_help COMMAND qmini_return_to_zero --help)
+    add_test(NAME m8010_readonly_help COMMAND m8010_readonly --help)
     add_test(NAME gravity_dry_run
              COMMAND qmini_gravity_comp
                      --config ${CMAKE_CURRENT_SOURCE_DIR}/config/gravity_comp.conf

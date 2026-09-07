@@ -10,7 +10,7 @@ GO-M8010-6 通信、转子/关节坐标换算和台架测试；Python 层完成�
 当前可执行程序：
 
 - `qmini_motor_state`：读取指定串口、指定 ID 的电机状态；
-- `qmini_sine_position`：让 ID 0–5 执行相同的相对正弦位置测试。
+- `qmini_sine_position`：让配置的四个电机执行相对正弦位置测试。
 - `qmini_gravity_comp`：带保护的 100% 静态重力前馈实验；
 - `qmini_return_to_zero`：执行 MuJoCo 验证过的 CSV 回到桌面支撑标定位；
 - `qmini-motion`：离线 FK/IK、可达空间、轨迹与可视化入口（不打开串口）。
@@ -133,7 +133,11 @@ cd Qarm
 cmake -S . -B build
 cmake --build build -j2
 ctest --test-dir build --output-on-failure
+cmake --install build --prefix "$HOME/.local"
 ```
+
+安装后，`m8010_readonly`、`qmini-gravity` 和 `qmini-return-home` 都从开发板本机运行；
+读取器位于 `~/.local/libexec/qarm/`，两个控制器包装命令位于 `~/.local/bin/`。
 
 默认先使用仓库内的 `unitree_actuator_sdk/` 工作副本；没有该目录时回退到与 `Qarm/`
 相邻的 `unitree_actuator_sdk/`。若 SDK 位于其他位置：
@@ -164,7 +168,7 @@ Python 运动层采用“URDF 模型—阻尼最小二乘 IK—工作空间采�
 查看零位 FK：
 
 ```bash
-.venv/bin/qmini-motion fk --q-deg 0 0 0 0 0 0
+.venv/bin/qmini-motion fk --q-deg 0 0 0 0
 ```
 
 采样 100000 个关节姿态，以 FK 构建无自碰撞可达区域并保存：
@@ -332,10 +336,9 @@ qmini_arm::JointState joint =
 安装并验证：
 
 ```bash
-UV_CACHE_DIR=/private/tmp/qarm_uv_cache uv sync --extra dev
-UV_CACHE_DIR=/private/tmp/qarm_uv_cache uv run qarm-sim validate
-UV_CACHE_DIR=/private/tmp/qarm_uv_cache uv run qarm-sim render
-UV_CACHE_DIR=/private/tmp/qarm_uv_cache uv run pytest -q
+.venv/bin/qarm-sim validate
+.venv/bin/qarm-sim render
+.venv/bin/pytest -q
 ```
 
 开发板读取器安装在：
@@ -347,8 +350,7 @@ UV_CACHE_DIR=/private/tmp/qarm_uv_cache uv run pytest -q
 它只允许顺序发送 `BRAKE+全零` 请求，不实现 FOC 运动命令。运行仍要求机械支撑：
 
 ```bash
-UV_CACHE_DIR=/private/tmp/qarm_uv_cache uv run qarm-sim inspect-stream \
-  --ssh-target HwHiAiUser@192.168.10.102 \
+.venv/bin/qarm-sim inspect-stream \
   --samples 5 \
   --acknowledge-supported-arm
 ```
@@ -367,7 +369,7 @@ reference angle deg:   0.0   +100.1540   +8.8698   +0.0000
 ```
 
 - 第一根长臂 STL 与底板 STL 定义的桌面相切；
-- 远端 `motor.stl` 与同一桌面相切；
+- 末端 `motor.stl` 与同一桌面相切；
 - `joint_2/motor ID 1≈100.1540°` 保留第一根长臂的桌面支撑条件；
 - `joint_3/motor ID 2≈8.8698°` 保留原第三轴几何标零角度；
 - `joint_4/motor ID 3=0°` 使用重构后机构要求的第四轴机械标零位置。
@@ -375,8 +377,8 @@ reference angle deg:   0.0   +100.1540   +8.8698   +0.0000
 可随时复算并检查 STL 误差：
 
 ```bash
-UV_CACHE_DIR=/private/tmp/qarm_uv_cache uv run qarm-sim solve-calibration-pose
-UV_CACHE_DIR=/private/tmp/qarm_uv_cache uv run qarm-sim viewer --calibration-pose
+.venv/bin/qarm-sim solve-calibration-pose
+.venv/bin/qarm-sim viewer --calibration-pose
 ```
 
 1. 可靠支撑机械臂，手动摆到上述姿态；不要用电机命令把它驱动到这个超软限位姿态。
@@ -384,8 +386,7 @@ UV_CACHE_DIR=/private/tmp/qarm_uv_cache uv run qarm-sim viewer --calibration-pos
 3. 执行：
 
 ```bash
-UV_CACHE_DIR=/private/tmp/qarm_uv_cache uv run qarm-sim capture-zero \
-  --ssh-target HwHiAiUser@192.168.10.102 \
+.venv/bin/qarm-sim capture-zero \
   --samples 200 \
   --confirm-table-supported-pose \
   --acknowledge-supported-arm
@@ -408,8 +409,7 @@ UV_CACHE_DIR=/private/tmp/qarm_uv_cache uv run qarm-sim capture-zero \
 标零后启动实时 MuJoCo 镜像：
 
 ```bash
-UV_CACHE_DIR=/private/tmp/qarm_uv_cache uv run qarm-sim mirror \
-  --ssh-target HwHiAiUser@192.168.10.102 \
+.venv/bin/qarm-sim mirror \
   --acknowledge-supported-arm
 ```
 
@@ -468,12 +468,9 @@ FOC 模式启动前要求五轮完整反馈、当前 boot ID、所有关节在�
 硬保护为 `[1.50, 1.50, 1.50, 2.40] rad/s`，单帧立即退出。超速故障
 会打印实测值、阈值和保护类型。控制器还包含 100 Hz 循环、阻尼、力矩 slew、
 温度/错误码/反馈/50 ms 调度看门狗。正常 12 秒实验为 3 秒渐入、6 秒观察、
-3 秒渐出，再确认零力矩 FOC 并切回 BRAKE；故障路径立即尝试 BRAKE。SSH 断开
-产生的 `SIGHUP` 也会走停止流程，并忽略日志管道断开产生的 `SIGPIPE`。
-
-通过 SSH 做首次实验时，建议先创建 `~/.local/state/qarm`，并把控制器 stdout/stderr
-直接重定向到开发板本地文件，而不是接到 `tee` 等管道；这样远端输出背压不会阻塞
-控制线程。实验结束后再读取该日志。
+3 秒渐出，再确认零力矩 FOC 并切回 BRAKE；故障路径立即尝试 BRAKE。进程收到
+停止信号也会走停止流程，并忽略日志管道断开产生的 `SIGPIPE`。建议先创建
+`~/.local/state/qarm`，把控制器 stdout/stderr 重定向到开发板本地文件，实验结束后再读取日志。
 
 开发板或任一电机掉电后必须重新标零并更新部署配置。boot ID 只能发现开发板重启，
 不能自动发现单台电机掉电，因此 `--confirm-same-motor-power-cycle` 是人工安全门。
@@ -489,7 +486,7 @@ FOC 模式启动前要求五轮完整反馈、当前 boot ID、所有关节在�
 生成轨迹；`plan-home` 的 `--start-deg` 必须填写当前四个关节角：
 
 ```bash
-UV_CACHE_DIR=/private/tmp/qarm_uv_cache uv run qarm-sim plan-home \
+.venv/bin/qarm-sim plan-home \
   --start-deg 10 5 10 5 \
   --output build/calibration_home.csv
 ```
@@ -497,12 +494,12 @@ UV_CACHE_DIR=/private/tmp/qarm_uv_cache uv run qarm-sim plan-home \
 数学 URDF 零位仍可单独规划，但不会用于下电：
 
 ```bash
-UV_CACHE_DIR=/private/tmp/qarm_uv_cache uv run qarm-sim plan-urdf-zero \
+.venv/bin/qarm-sim plan-urdf-zero \
   --start-deg 10 5 10 5 \
   --output build/urdf_zero.csv
 ```
 
-该命令只做离线计算，不访问 SSH/串口。规划器先检查起点、零位和完整路径的 URDF
+该命令只做离线计算，不访问串口。规划器先检查起点、零位和完整路径的 URDF
 自碰撞，必要时使用 RRT-Connect 绕开碰撞；随后用五次曲线限制到 `0.25 rad/s`、
 `0.50 rad/s²` 和 `10 ms` 控制周期。命令会再用 MuJoCo 闭环实验复现 M8010 的
 位置/速度控制、100% 重力前馈、Q8 力矩量化、模板力矩帽和假设的
@@ -526,7 +523,7 @@ BRAKE→FOC 的前三帧单独处理 SDK 模式切换速度瞬态：首帧位置
 实机操作示例（人在机械臂旁、机械支撑和物理断电就绪后）：
 
 ```bash
-# 开发板本地执行；日志写本地文件，避免 SSH 输出背压阻塞控制线程
+# 开发板本地执行；日志写本地文件，避免终端输出背压阻塞控制线程
 mkdir -p ~/.local/state/qarm
 ~/.local/bin/qmini-return-home \
   --trajectory /path/to/calibration_home.csv \

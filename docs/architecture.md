@@ -1,123 +1,90 @@
-# 工程架构与后续扩展
+# Viser 统一控制架构
 
-## 设计目标
+`qarm-viser` 是唯一操作界面。浏览器提交标零、模式切换和计划执行等高层意图；
+界面代码不打开串口，不逐周期生成电机命令。
 
-工程按“硬件通信—单位与标定—安全与轨迹—机械臂算法—应用适配”分层。上层只使用稳定、带单位语义的数据结构，避免 IK、轨迹规划或 ROS 节点直接依赖 Unitree SDK 的二进制接口。
-
-```text
-CLI / ROS 2 / GUI
-        │
-轨迹执行器、关节控制器、状态聚合器
-        │
-IK / FK / URDF 模型 / 碰撞与限位
-        │
-JointState + JointCalibration + Safety
-        │
-MotorBus + MotorCommand + MotorState
-        │
-unitree_actuator_sdk + RS-485 + M8010
-```
-
-依赖只能向下。尤其需要避免：
-
-- IK 解算器直接创建 `MotorCmd`；
-- ROS 回调直接操作串口；
-- 在多个应用中重复实现减速比、方向或零位换算；
-- 把未标定的 `q_rotor/6.33` 当作 URDF 关节绝对角度。
-
-## 当前模块职责
-
-### `types.hpp`
-
-定义项目内部稳定数据类型：
-
-- `MotorCommand`：转子侧力位混合命令；
-- `MotorState`：SDK 返回的转子侧状态；
-- `JointCalibration`：电机 ID、减速比、方向和机械零位映射；
-- `JointState`：供机械臂算法使用的关节侧状态；
-- `kJointCount=4`、`JointArray<T>` 和 `JointVector`：当前四轴整臂容器。
-
-`QminiArm::Core` 只包含数学、安全、换算和轨迹代码，可在 macOS 离线构建测试；
-`QminiArm::Hardware` 加入 Linux `MotorBus` 和 Unitree SDK，由硬件应用链接。
-
-### `MotorBus`
-
-唯一允许直接依赖 `unitree_actuator_sdk` 的模块。它负责：
-
-- 初始化 4 Mbps M8010 串口；
-- 完整初始化 SDK 命令结构；
-- 请求—应答、CRC 有效性和返回 ID 检查；
-- 明确区分普通交换和具有“释放保持”副作用的零输出读取；
-- 在退出路径上尽力向一组电机发送零输出。
-
-### `joint_conversion`
-
-集中实现转子侧与关节侧换算。位置命令只有在 `position_calibrated=true` 时才允许转换为转子目标，防止上层在没有回零时误发绝对角度。
-
-### `safety`
-
-提供与具体应用无关的反馈检查，以及速度、转子力矩估计、温度和相对行程保护。后续应在这一层增加每关节独立限位、通信看门狗和控制模式状态机。
-
-### `sine_trajectory`
-
-只处理 SI 单位的数学轨迹，不依赖串口和 SDK。后续五次多项式、梯形速度、S 曲线和笛卡尔插补应采用相同方式实现为纯计算模块，方便离线测试。
-
-## Python 机械臂算法模块（已实现）
-
-当前算法层位于 `python/qmini_arm_motion/`，以三个深模块承载主要复杂度：
-
-- `MotionPlanner.plan(start_q, target_position)`：隐藏 IK 分支连续性、自碰撞检查、
-  笛卡尔路点、RRT 兜底和时间参数化；
-- `M8010CommandMapper.frames(trajectory)`：隐藏 ID、方向、减速比、机械零位和
-  转子侧参数换算。
-- `MotorDynamicsSimulator.advance(frame, duration)`：复用 `ArmModel` 的惯性、关节和限位，
-  隐藏重力、M8010 PD 折算和数值积分。
-
-可视化和命令行只跨这三个 interface，不复制运动学、动力学或电机换算公式。详见
-[运动规划说明](motion_planning.md)。
-
-## 后续真机控制模块
+## 当前可运行链路
 
 ```text
-include/qmini_arm/
-├── arm_config.hpp          # 四关节 ID/方向/零位/限位配置
-├── joint_group.hpp         # 一次控制周期的四轴状态与命令
-├── arm_model.hpp           # 若需要全 C++ 实时控制，可适配 Python 已验证模型
-├── trajectory_executor.hpp # 消费规划轨迹并按周期命令下发
-└── control_state_machine.hpp
+浏览器
+  ↕ Viser 场景、控件与事件
+qarm_viser.app
+  ├── qmini_arm_motion：FK / 位置 IK / 碰撞 / RRT / 时间轨迹
+  └── qarm_control 后端：标定 / 状态 / 计划 / 停止 / 租约
+        └── fake：离线理想轨迹执行
 ```
 
-推荐实施顺序：
+Viser 和 Python fake 运行在同一个进程。`controller/` 中的 C++ 控制器是独立库，
+目前没有 daemon、Socket 服务或 Python 绑定把它接到这条路径。
+可选硬件总线适配器不改变这一事实；`qarm-viser --backend hardware` 明确拒绝启动。
+Python 与 C++ 的状态逻辑需要端到端契约验证后才能视为同一套硬件运行链路。
 
-1. 实机标定四个 URDF 关节的 ID、方向、回零值，并更新现有 YAML 配置；
-2. 增加只读状态聚合器，一次轮询形成带时间戳的四轴 `JointState`；
-3. 用实机反馈验证 FK 数字孪生、机械尺寸、转轴方向和零位一致；
-4. 实现消费现有规划轨迹的单线程硬件 adapter，并接回安全检查；
-5. 低速、无负载验证后，再接入 ROS 2 `ros2_control` 或自定义上层接口。
+## 模块边界
 
-## 控制器边界
+| 模块 | 责任 | 不负责 |
+| --- | --- | --- |
+| `qarm_viser` | 场景、操作面板、规划预览、显示后端结果 | 电机周期控制 |
+| `qarm_control` | 领域记录、离线后端、命令和快照契约 | Unitree SDK |
+| `qmini_arm_motion` | 模型、算法、离线命令映射和初步动力学 | 串口或网络服务 |
+| `qarm_sim` | MuJoCo 及离线诊断 | 新生产控制入口 |
+| `controller/` | C++ 状态机、控制计算、计划与反馈检查 | 浏览器 UI |
+| `QminiArm::Core` | 重力、轨迹、保护、关节换算 | SDK |
+| `QminiArm::Hardware` | MotorBus 与 Unitree SDK 交换 | IK 与 UI |
 
-未来的“到达指定位置”不应把 IK 结果直接作为一步位置命令发送。建议的数据流是：
+旧 `platform/` 的 React、HTTP 服务和部署脚本已从当前源码移除，可从 Git 历史恢复。
+旧可视化入口 `qmini-motion viz` 转发到 `qarm-viser`，不保留第二套控制页面。
+`qmini-motion fk/workspace/plan` 的 CSV 是离线计算产物，不是实机执行授权。
+
+## 状态与身份
+
+控制状态区分断开、只读、标零采集、标定有效、就绪、重力保持、执行、故障和急停。
+标零采集只产生候选；提交后还需满足正常软限位才可以进入 READY。
+桌面参考的 J2 超出正常软限位，不能把该参考自动作为普通运动目标。
+
+标定记录绑定模型、控制器启动周期、电机 ID、方向、参考姿态和样本统计。
+计划绑定模型与当前标定，并校验时间序列、关节限位、速度及起点一致性。
+只有通过校验的计划 ID 才能执行；身份变更应使旧计划失效。
+
+三个角度语义必须区分：`q_rotor` 是 SDK 累计转子角，`q_output_raw=q_rotor/r`
+是未标定输出轴诊断角，`q_joint` 是应用方向和零位后的 URDF 关节角。
+未标定 `q_joint` 为空；只有有效的 `q_joint` 可输入 FK、IK 与规划器。
+
+## C++ 构建
+
+默认只构建 SDK 无关核心与离线测试：
+
+```bash
+cmake -S . -B build-core
+cmake --build build-core --parallel 2
+ctest --test-dir build-core --output-on-failure
+```
+
+Linux 上可单独编译硬件库和控制适配器，不启动设备：
+
+```bash
+cmake -S . -B build-hardware -DQARM_BUILD_HARDWARE=ON \
+  -DUNITREE_ACTUATOR_SDK_ROOT=/absolute/path/to/unitree_actuator_sdk
+cmake --build build-hardware --parallel 2
+```
+
+SDK 保持只读，路径解析位于 `cmake/UnitreeActuatorSDK.cmake`。
+`QARM_BUILD_MAINTENANCE_APPS=ON` 仅用于显式构建历史台架工具，不安装成生产入口。
+旧 `QMINI_ARM_BUILD_APPS` 作为维护构建的兼容选项保留，默认关闭。
+
+## 尚需接通的硬件路径
 
 ```text
-末端目标位姿
-  → IK 候选解
-  → 关节限位/连续性/碰撞筛选
-  → 带速度和加速度约束的时间轨迹
-  → 每周期关节目标
-  → 标定换算为转子目标
-  → 电机侧安全限幅
-  → MotorBus
+Viser → Python IPC client → 本机 Unix Socket → C++ daemon
+                                               ↓
+                                  ArmController + 总线适配器
+                                               ↓
+                                          MotorBus / SDK
 ```
 
-控制循环应由单一线程拥有串口，其他线程通过有时间戳的目标缓冲区交互。这样可以避免状态读取器、IK 线程和 ROS 回调同时访问同一条半双工总线。
+此路径中的 IPC 客户端与 daemon 尚未实现。协议帧格式不能替代服务端的权限、
+租约、重放、标定持久化和模型一致性检查；Socket 存在也不代表具备硬件执行能力。
 
-## 标定与状态语义
-
-必须区分三个位置概念：
-
-1. `q_rotor`：SDK 的转子累计角；
-2. `q_output_raw=q_rotor/r`：未标定的减速器输出诊断角；
-3. `q_joint`：应用方向和机械零位后的 URDF 关节角。
-
-只有第三项可以输入 FK、IK 或发布为机器人关节状态。每次上电后需要通过机械限位、原点传感器或输出侧绝对编码器重建可靠的零位；单纯保存一次很大的累计转子角不能保证跨掉电有效。
+硬件控制周期应由单一 C++ 进程拥有，并统一处理重力渐变、力矩上限与 slew、
+速度/温度/反馈有效性、跟踪误差、总线超时和租约失效。
+Viser 回调不得阻塞电机周期，断开浏览器也不能移交串口所有权。
+M8010 BRAKE 会改变控制状态，且不是机械安全抱闸；现场标零必须有外部支撑。

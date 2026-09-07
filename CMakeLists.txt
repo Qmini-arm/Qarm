@@ -5,13 +5,14 @@ set(CMAKE_CXX_STANDARD 14)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-set(QMINI_ARM_APPS_DEFAULT OFF)
-if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-  set(QMINI_ARM_APPS_DEFAULT ON)
-endif()
-option(QMINI_ARM_BUILD_APPS "Build Linux Unitree command-line applications"
-       ${QMINI_ARM_APPS_DEFAULT})
+option(QARM_BUILD_HARDWARE "Build the Unitree bus and controller adapter" OFF)
+option(QARM_BUILD_MAINTENANCE_APPS "Build legacy standalone motor maintenance tools" OFF)
+option(QMINI_ARM_BUILD_APPS "Deprecated alias for QARM_BUILD_MAINTENANCE_APPS" OFF)
 option(QMINI_ARM_BUILD_TESTS "Build offline unit tests" ON)
+if(QMINI_ARM_BUILD_APPS)
+  message(DEPRECATION "Use QARM_BUILD_MAINTENANCE_APPS for legacy motor tools")
+  set(QARM_BUILD_MAINTENANCE_APPS ON)
+endif()
 
 add_library(qmini_arm_core
   src/gravity_control.cpp
@@ -29,11 +30,11 @@ target_include_directories(qmini_arm_core
 )
 target_compile_options(qmini_arm_core PRIVATE -Wall -Wextra -Wpedantic)
 
-if(QMINI_ARM_BUILD_APPS)
+if(QARM_BUILD_HARDWARE OR QARM_BUILD_MAINTENANCE_APPS)
   if(NOT CMAKE_SYSTEM_NAME STREQUAL "Linux")
     message(FATAL_ERROR
       "Unitree hardware applications require Linux. "
-      "Use -DQMINI_ARM_BUILD_APPS=OFF for portable core tests.")
+      "Disable QARM_BUILD_HARDWARE and QARM_BUILD_MAINTENANCE_APPS for portable tests.")
   endif()
   list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
   include(UnitreeActuatorSDK)
@@ -43,7 +44,9 @@ if(QMINI_ARM_BUILD_APPS)
     PUBLIC QminiArm::Core
     PRIVATE Unitree::ActuatorSDK)
   target_compile_options(qmini_arm_hardware PRIVATE -Wall -Wextra -Wpedantic)
+endif()
 
+if(QARM_BUILD_MAINTENANCE_APPS)
   add_executable(qmini_motor_state apps/read_motor_state.cpp)
   target_include_directories(qmini_motor_state PRIVATE apps)
   target_link_libraries(qmini_motor_state PRIVATE QminiArm::Hardware)
@@ -75,31 +78,18 @@ if(QMINI_ARM_BUILD_APPS)
     qmini_return_to_zero m8010_readonly PROPERTIES
     BUILD_RPATH "${UNITREE_ACTUATOR_SDK_LIBRARY_DIR}"
   )
-  set_target_properties(qmini_gravity_comp PROPERTIES
-    INSTALL_RPATH "\$ORIGIN/lib"
-  )
-  set_target_properties(qmini_return_to_zero PROPERTIES
-    INSTALL_RPATH "\$ORIGIN/lib"
-  )
-  set_target_properties(m8010_readonly PROPERTIES
-    INSTALL_RPATH "\$ORIGIN/lib"
-  )
-  install(TARGETS qmini_gravity_comp qmini_return_to_zero m8010_readonly
-          RUNTIME DESTINATION libexec/qarm)
-  install(PROGRAMS tools/qmini-gravity tools/qmini-return-home
-          DESTINATION bin)
-  install(FILES "${UNITREE_ACTUATOR_SDK_LIBRARY}"
-          DESTINATION libexec/qarm/lib)
+  # Legacy tools are build-tree maintenance utilities, never production installs.
 endif()
 
 include(CTest)
+add_subdirectory(controller)
 if(BUILD_TESTING AND QMINI_ARM_BUILD_TESTS)
   add_executable(qmini_arm_core_tests tests/core_tests.cpp)
   target_link_libraries(qmini_arm_core_tests PRIVATE QminiArm::Core)
   target_compile_options(qmini_arm_core_tests PRIVATE -Wall -Wextra -Wpedantic)
   add_test(NAME core_tests COMMAND qmini_arm_core_tests)
 
-  if(QMINI_ARM_BUILD_APPS)
+  if(QARM_BUILD_MAINTENANCE_APPS)
     add_test(NAME motor_state_help COMMAND qmini_motor_state --help)
     add_test(NAME sine_help COMMAND qmini_sine_position --help)
     add_test(NAME sine_dry_run COMMAND qmini_sine_position --dry-run)

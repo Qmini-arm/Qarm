@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+project_dir="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
+python_bin="$project_dir/.venv/bin/python"
+if [[ ! -x "$python_bin" ]]; then
+  echo "Missing .venv: install the project with its dev extra first." >&2
+  exit 1
+fi
+cd "$project_dir"
+"$python_bin" -m ruff check python tests/python
+PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 "$python_bin" -m pytest -q
+cmake -S "$project_dir" -B "$project_dir/build-core" \
+  -DQARM_BUILD_HARDWARE=OFF -DQARM_BUILD_MAINTENANCE_APPS=OFF -DQMINI_ARM_BUILD_APPS=OFF
+cmake --build "$project_dir/build-core" --parallel 2
+ctest --test-dir "$project_dir/build-core" --output-on-failure

@@ -14,7 +14,6 @@ __pycache__/
 # this path) and is resolved by cmake/UnitreeActuatorSDK.cmake.
 /unitree_actuator_sdk/
 
-# Web control platform generated files
-/platform/node_modules/
-/platform/dist/
-/platform/tsconfig.tsbuildinfo
+# Runtime state is local; checked-in calibration templates remain uncalibrated.
+/.qarm/
+*.sock

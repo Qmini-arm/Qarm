@@ -43,10 +43,10 @@ def _parser() -> argparse.ArgumentParser:
     plan.add_argument("--start-deg", type=float, nargs="+", metavar="DEG")
     plan.add_argument("--output", type=Path, help="write M8010 command frames as CSV")
 
-    viz = commands.add_parser("viz", help="launch the interactive browser simulation")
+    viz = commands.add_parser("viz", help="compatibility alias for qarm-viser")
     viz.add_argument("--start-deg", type=float, nargs="+", metavar="DEG")
     viz.add_argument("--workspace-samples", type=int, default=20000)
-    viz.add_argument("--host", default="0.0.0.0")
+    viz.add_argument("--host", default="127.0.0.1")
     viz.add_argument("--port", type=int, default=8080)
     return parser
 
@@ -72,6 +72,20 @@ def main(argv: list[str] | None = None) -> int:
         format="%(levelname)s: %(message)s",
     )
     try:
+        if args.command == "viz":
+            from qarm_viser.app import main as viser_main
+
+            forwarded = [
+                "--urdf", str(args.urdf),
+                "--motor-config", str(args.motor_config),
+                "--host", args.host,
+                "--port", str(args.port),
+                "--workspace-samples", str(args.workspace_samples),
+            ]
+            if args.start_deg is not None:
+                forwarded.extend(["--start-deg", *(str(value) for value in args.start_deg)])
+            return viser_main(forwarded)
+
         model = ArmModel(args.urdf)
         collision = CollisionChecker(model)
         mapper = M8010CommandMapper.from_yaml(model, args.motor_config)
@@ -153,23 +167,6 @@ def main(argv: list[str] | None = None) -> int:
                 )
             return 0
 
-        if args.command == "viz":
-            from .dynamics import ArmDynamics, DynamicsConfig
-            from .visualization import launch_visualization
-
-            dynamics = ArmDynamics(model, DynamicsConfig.from_yaml(args.motor_config))
-            launch_visualization(
-                model,
-                collision,
-                _planner(model, collision, mapper),
-                mapper,
-                dynamics,
-                initial_q=np.radians(args.start_deg),
-                workspace_samples=args.workspace_samples,
-                host=args.host,
-                port=args.port,
-            )
-            return 0
     except (ValueError, RuntimeError, FileNotFoundError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1

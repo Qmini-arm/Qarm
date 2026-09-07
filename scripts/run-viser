@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+project_dir="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
+viser_bin="$project_dir/.venv/bin/qarm-viser"
+if [[ ! -x "$viser_bin" ]]; then
+  echo "Missing .venv: install with python3 -m venv .venv and pip install -e '.[dev]'" >&2
+  exit 1
+fi
+cd "$project_dir"
+exec "$viser_bin" "$@"

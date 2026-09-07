@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://qarm.local/protocol/arm_control.schema.json",
+  "title": "Qarm high-level command and response v1",
+  "oneOf": [{"$ref": "#/$defs/command"}, {"$ref": "#/$defs/response"}, {"$ref": "#/$defs/snapshot"}],
+  "$defs": {
+    "id": {"type": "string", "minLength": 1},
+    "vector": {"type": "array", "minItems": 1, "items": {"type": "number"}},
+    "command": {
+      "type": "object", "required": ["schema_version", "command", "request_id", "client_id", "payload"],
+      "properties": {
+        "schema_version": {"const": 1}, "command": {"enum": ["connection.connect", "connection.disconnect", "lease.acquire", "lease.heartbeat", "lease.release", "zero.capture", "zero.commit", "control.enable", "gravity.set", "plan.validate", "plan.execute", "stop", "estop", "fault.reset"]},
+        "request_id": {"$ref": "#/$defs/id"}, "client_id": {"$ref": "#/$defs/id"}, "payload": {"type": "object"}
+      },
+      "additionalProperties": false
+    },
+    "response": {
+      "type": "object", "required": ["schema_version", "request_id", "accepted", "result", "error", "snapshot"],
+      "properties": {"schema_version": {"const": 1}, "request_id": {"type": "string"}, "accepted": {"type": "boolean"}, "result": {"type": ["object", "null"]}, "error": {"type": ["object", "null"]}, "snapshot": {"$ref": "#/$defs/snapshot"}},
+      "additionalProperties": false
+    },
+    "joint": {
+      "type": "object", "required": ["name", "motor_id", "q_rotor", "q_joint", "dq_joint", "tau", "temperature_c", "error"],
+      "properties": {"name": {"type": "string"}, "motor_id": {"type": "integer", "minimum": 0, "maximum": 14}, "q_rotor": {"type": "number"}, "q_joint": {"type": ["number", "null"]}, "dq_joint": {"type": "number"}, "tau": {"type": "number"}, "temperature_c": {"type": "number"}, "error": {"type": "integer"}}
+    },
+    "snapshot": {
+      "type": "object", "required": ["schema_version", "sequence", "monotonic_ns", "controller_state", "model_hash", "calibration_id", "board_boot_id", "joints", "lease", "calibration_candidate"],
+      "properties": {"schema_version": {"const": 1}, "sequence": {"type": "integer", "minimum": 0}, "monotonic_ns": {"type": "integer", "minimum": 0}, "controller_state": {"enum": ["disconnected", "read_only", "zero_capture", "calibration_valid", "ready", "gravity_hold", "executing", "fault", "estop"]}, "model_hash": {"$ref": "#/$defs/id"}, "calibration_id": {"type": ["string", "null"]}, "board_boot_id": {"$ref": "#/$defs/id"}, "joints": {"type": "array", "items": {"$ref": "#/$defs/joint"}}, "gravity_scale": {"type": "number"}, "active_plan_id": {"type": ["string", "null"]}, "fault": {"type": ["string", "null"]}, "calibration_valid": {"type": "boolean"}, "calibration_candidate": {"type": ["object", "null"]}, "lease": {"type": ["object", "null"]}}
+    }
+  }
+}

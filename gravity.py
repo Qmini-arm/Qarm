@@ -3,48 +3,6 @@ import time
 from motor_driver import SerialPort, MotorCmd, MotorData, move
 from config.config import MOTOR_OFFSETS
 
-def inverse_kinematics(r, z):
-    """
-    逆运动学：已知目标腕部位置(r, z)，求 joint_2、joint_3 角度。
-
-    joint_2 和 joint_3 的轴线平行但方向相反，所以第二段连杆的
-    物理相对角是 ``-q2``。
-    """
-    # 限制到原点的距离，防止数学溢出
-    d_square = r**2 + z**2
-    if d_square > (LINK1_LENGTH + LINK2_LENGTH)**2:
-        return None, None # 够不到，超出最大臂展
-    if d_square < (LINK1_LENGTH - LINK2_LENGTH)**2:
-        return None, None # 靠太近，结构干涉
-
-    # 余弦定理求 q2
-    cos_q2 = (d_square - LINK1_LENGTH**2 - LINK2_LENGTH**2) / (2 * LINK1_LENGTH * LINK2_LENGTH)
-    # 浮点数防越界
-    cos_q2 = max(-1.0, min(1.0, cos_q2)) 
-    
-    # 采用“肘部朝上”分支。这里 relative_angle 是两段连杆的物理夹角，
-    # q2 是 URDF joint_3 角度，二者因轴方向相反而符号相反。
-    relative_angle = -math.acos(cos_q2)
-    q2 = -relative_angle
-
-    # 求 q1
-    k1 = LINK1_LENGTH + LINK2_LENGTH * math.cos(relative_angle)
-    k2 = LINK2_LENGTH * math.sin(relative_angle)
-    q1 = math.atan2(z, r) - math.atan2(k2, k1)
-
-    return q1, q2
-    
-def forward_kinematics(q1, q2):
-    """
-    正运动学：已知角度，求腕部位置
-    假设原点在肩部电机轴心，正前方为r轴正方向，正上方为z轴正方向。
-    角度0度时手臂水平向前。
-    """
-    r = LINK1_LENGTH * math.cos(q1) + LINK2_LENGTH * math.cos(q1 - q2)
-    z = LINK1_LENGTH * math.sin(q1) + LINK2_LENGTH * math.sin(q1 - q2)
-    return r, z
-
-
 def verify_motor_init(ser, mt, dt, motor_name):
     success_count = 0
     # 循环读取，直到连续获得 10 次稳定反馈

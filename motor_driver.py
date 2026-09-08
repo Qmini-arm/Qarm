@@ -137,7 +137,7 @@ class SerialPort:
 
 
 
-def move(ser, cmd, data, target=1.0, duration=1.0, kp=1.0, kd=0.1):
+def move(ser, cmd, data, target=1.0, duration=1.0, kp=1.0, kd=0.1, tau=0.0):
     """
     非阻塞运动函数：调用后立即返回，后台线程控制电机平滑移动。
     
@@ -147,9 +147,12 @@ def move(ser, cmd, data, target=1.0, duration=1.0, kp=1.0, kd=0.1):
         data: MotorData 实例
         target: 目标位置 (rad)
         duration: 移动耗时 (s)
+        kp: 位置环比例增益
+        kd: 位置环微分增益
+        tau: 目标力矩 (Nm)
     """
     def _trajectory_task():
-        # 1. 发送一次指令以获取当前真实位置作为起点
+        # 1. 发送一次指令以获取当q前真实位置作为起点
         ser.sendRecv(cmd, data)
         start_pos = data.q
         start_time = time.time()
@@ -158,7 +161,7 @@ def move(ser, cmd, data, target=1.0, duration=1.0, kp=1.0, kd=0.1):
         cmd.mode = 1
         cmd.kp = kp
         cmd.kd = kd
-        cmd.tau = 0.0
+        cmd.tau = tau
         
         # 3. 后台高频控制循环
         while True:
@@ -189,7 +192,45 @@ def move(ser, cmd, data, target=1.0, duration=1.0, kp=1.0, kd=0.1):
     t.daemon = True  # 设置为守护线程，主程序结束时它会自动退出
     t.start()
 
-
+class ArmController:
+    def __init__(self, serial_port):
+        self.ser = SerialPort(serial_port)
+        self.mt0 = MotorCmd(id=0, direction=1, offset=0.0)  # 肩部
+        self.mt1 = MotorCmd(id=1, direction=1, offset=0.0)  # 肘部1
+        self.mt2 = MotorCmd(id=2, direction=1, offset=0.0)  # 肘部2
+        self.mt3 = MotorCmd(id=3, direction=1, offset=0.0)  # 手腕
+        self.dt0 = MotorData()
+        self.dt1 = MotorData()
+        self.dt2 = MotorData()
+        self.dt3 = MotorData()
+    def get_joint_positions(self):
+        """
+        获取当前四个关节的角度。
+        
+        返回:
+            joint_positions: 列表 [q0, q1, q2, q3]，单位为弧度
+        """
+        self.ser.sendRecv(self.mt0, self.dt0)
+        self.ser.sendRecv(self.mt1, self.dt1)
+        self.ser.sendRecv(self.mt2, self.dt2)
+        self.ser.sendRecv(self.mt3, self.dt3)
+        
+        return [self.dt0.q, self.dt1.q, self.dt2.q, self.dt3.q]
+    def moveJ(self, targetQ):
+        """
+        关节空间运动函数：将手臂移动到指定的关节角度。
+        
+        参数:
+            targetQ: 目标关节角度列表 [q0, q1, q2, q3]，单位为弧度
+        """
+        if len(targetQ) != 4:
+            raise ValueError("targetQ 必须包含四个关节角度")
+        
+        # 发送每个电机的移动指令
+        move(self.ser, self.mt0, self.dt0, target=targetQ[0], duration=1.0)
+        move(self.ser, self.mt1, self.dt1, target=targetQ[1], duration=1.0)
+        move(self.ser, self.mt2, self.dt2, target=targetQ[2], duration=1.0)
+        move(self.ser, self.mt3, self.dt3, target=targetQ[3], duration=1.0)
 
 
 

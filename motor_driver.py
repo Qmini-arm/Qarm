@@ -307,7 +307,7 @@ class ArmController:
         for motor, data in zip(self.motors, self.feedback):
             self.ser.sendRecv(motor, data)
 
-    def moveJ(self, targetQ, duration=1.0, kp=1.0, kd=0.1, tau=0.0):
+    def moveJ(self, targetQ, duration=1.0, kp=None, kd=None):
         """
         关节空间运动函数：将手臂移动到指定的关节角度。
         
@@ -317,23 +317,35 @@ class ArmController:
         targetQ = self._validate_target(targetQ)
         if duration <= 0:
             raise ValueError("duration 必须大于 0")
+        kp = [1.0] * self.MOTOR_COUNT if kp is None else list(kp)
+        kd = [0.1] * self.MOTOR_COUNT if kd is None else list(kd)
+        if len(kp) != self.MOTOR_COUNT or len(kd) != self.MOTOR_COUNT:
+            raise ValueError("kp 和 kd 必须包含四个关节值")
         self.stop_motion()
 
         def _trajectory_task():
+            # Lazy import avoids the gravity -> motor_driver import cycle.
+            from gravity import calc_compensated_torque
+
             self.get_joint_positions()
             with self._state_lock:
                 start = [data.q for data in self.feedback]
             start_time = time.monotonic()
-            for motor in self.motors:
-                motor.mode, motor.kp, motor.kd, motor.tau = 1, kp, kd, tau
+            for index, motor in enumerate(self.motors):
+                motor.mode, motor.kp, motor.kd = 1, kp[index], kd[index]
             while not self._stop_event.is_set():
                 elapsed = time.monotonic() - start_time
                 s = min(elapsed / duration, 1.0)
                 factor = 10 * s**3 - 15 * s**4 + 6 * s**5
                 velocity_factor = 30 * s**2 - 60 * s**3 + 30 * s**4
+                tau1, tau2, tau3 = calc_compensated_torque(
+                    self.feedback[1], self.feedback[2], self.feedback[3]
+                )
+                torques = (0.0, tau1, tau2, tau3)
                 for index, (motor, data) in enumerate(zip(self.motors, self.feedback)):
                     motor.q = start[index] + (targetQ[index] - start[index]) * factor
                     motor.dq = (targetQ[index] - start[index]) / duration * velocity_factor
+                    motor.tau = torques[index]
                     self.ser.sendRecv(motor, data)
                 if s >= 1.0:
                     break

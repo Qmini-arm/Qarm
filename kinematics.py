@@ -2,7 +2,7 @@ import math
 import time
 from motor_driver import ArmController
 from config.config import MOTOR_OFFSETS
-from gravity import calc_compensated_torque, get_motor3_horizon_position, torque_soft_start
+from gravity import torque_soft_start
 
 LINK1_LENGTH = 0.3  # 第一段连杆长度，单位米
 LINK2_LENGTH = 0.3  # 第二段连杆长度，单位米
@@ -93,17 +93,14 @@ if __name__ == "__main__":
     time.sleep(0.5)
 
     target = [q0, q1, q2, q3]
+    arm.moveJ(
+        target,
+        duration=5.0,
+        kp=[1.0, 1.0, 1.0, 0.5],
+        kd=[0.1, 0.05, 0.025, 0.02],
+    )
     try:
         while True:
-            # 根据最新反馈计算补偿力矩，并通过一个统一的四电机轮询周期发送。
-            tau1, tau2, tau3 = calc_compensated_torque(feedback[1], feedback[2], feedback[3])
-            target[3] = get_motor3_horizon_position(feedback[1], feedback[2])
-            arm.send_joint_command(
-                target,
-                torques=[0.0, tau1, tau2, tau3],
-                kp=[1.0, 1.0, 1.0, 0.5],
-                kd=[0.1, 0.05, 0.025, 0.02],
-            )
             print(" ".join(
                 f"ID:{index} | P:{data.q:+7.2f} | V:{data.dq:+7.2f}"
                 for index, data in enumerate(feedback)

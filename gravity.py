@@ -18,7 +18,7 @@ def verify_motor_init(ser, mt, dt, motor_name):
             print(f"[{motor_name}] 读取失败，重试中...")
             
         time.sleep(0.005) # 留出 5ms 给 Linux 底层 USB 驱动喘息
-def calc_compensated_torque(dt1, dt2, dt3, pi_coeffs):
+def calc_compensated_torque(dt1, dt2, dt3):
     """
     计算 joint_2、joint_3、joint_4 的重力补偿力矩。
 
@@ -30,7 +30,15 @@ def calc_compensated_torque(dt1, dt2, dt3, pi_coeffs):
     dt1, dt2, dt3: 分别对应 joint_2、joint_3、joint_4 的反馈角度
     pi_coeffs: (PI_1, PI_2, PI_3) 动力学系数
     """
-    PI_1, PI_2, PI_3 = pi_coeffs
+    # 重力补偿系数（关节输出侧力矩，单位：N·m）。
+    #
+    # 这些数值由 qmini_arm.urdf.xacro 中 link_2/link_3/link_6 的
+    # mass 和质心位置估算：PI = mass * 9.80665 * sqrt(com_y² + com_z²)。
+    # 当前补偿模型假定各段在同一平面内，并把这些值作为 cos() 项的幅值；
+    # URDF 的 CAD 零位还可能带有相位偏移，首次上电应从较小比例开始验证。
+    PI_1 = 4.4  # link_2: 0.676212997 kg, r_com=0.258230863 m
+    PI_2 = 1.712549  # link_3: 0.676213000 kg, r_com=0.258249095 m
+    PI_3 = 0.00  # link_6: 0.016653600 kg, r_com=0.017495892 m
 
     q1, q2, q3 = dt1.q, dt2.q, dt3.q
     angle_link_2 = q1
@@ -45,7 +53,7 @@ def calc_compensated_torque(dt1, dt2, dt3, pi_coeffs):
 
     return tau1, tau2, tau3
 
-def torque_soft_start(ser_list, mt_list, dt_list, pi_coeffs, duration=1.0, steps=100):
+def torque_soft_start(ser_list, mt_list, dt_list, duration=1.0, steps=100):
     """
     平滑加载重力补偿力矩，防止电机在启动瞬间发生力矩阶跃和震动。
     """
@@ -87,7 +95,7 @@ def torque_soft_start(ser_list, mt_list, dt_list, pi_coeffs, duration=1.0, steps
     # 3. 缓启动插值主循环
     for i in range(1, steps + 1):
         ratio = i / steps  # 从 0.01 逐渐增加到 1.0
-        tau1, tau2, tau3 = calc_compensated_torque(dt1, dt2, dt3, pi_coeffs)
+        tau1, tau2, tau3 = calc_compensated_torque(dt1, dt2, dt3)
         # 计算满负荷受力，并乘以当前步的缓启动比例 ratio
         # 注意：这里我们用实时的反馈 dt.q 来计算重力，更精确
         mt3.tau = ratio * tau3
@@ -113,9 +121,6 @@ def torque_soft_start(ser_list, mt_list, dt_list, pi_coeffs, duration=1.0, steps
 
 # ================= 主控制流程 =================
 
-LINK1_LENGTH = 0.30 # 肩部电机轴心 到 肘部电机轴心 的距离
-LINK2_LENGTH = 0.30 # 肘部电机轴心 到 腕部电机轴心 的距离
-
 def get_motor3_horizon_position(dt1, dt2):
     """
     计算腕部电机（3号）在水平位置时的目标角度。
@@ -138,15 +143,6 @@ if __name__ == "__main__":
     dt2 = MotorData()
     dt3 = MotorData()
 
-    # 重力补偿系数（关节输出侧力矩，单位：N·m）。
-    #
-    # 这些数值由 qmini_arm.urdf.xacro 中 link_2/link_3/link_6 的
-    # mass 和质心位置估算：PI = mass * 9.80665 * sqrt(com_y² + com_z²)。
-    # 当前补偿模型假定各段在同一平面内，并把这些值作为 cos() 项的幅值；
-    # URDF 的 CAD 零位还可能带有相位偏移，首次上电应从较小比例开始验证。
-    PI_1 = 4.4  # link_2: 0.676212997 kg, r_com=0.258230863 m
-    PI_2 = 1.712549  # link_3: 0.676213000 kg, r_com=0.258249095 m
-    PI_3 = 0.00  # link_6: 0.016653600 kg, r_com=0.017495892 m
     
     #初始化角度
     verify_motor_init(ser, mt0, dt0, "肩部(mt0)")
@@ -157,12 +153,13 @@ if __name__ == "__main__":
         ser_list=[ser, ser, ser, ser], 
         mt_list=[mt0, mt1, mt2, mt3], 
         dt_list=[dt0, dt1, dt2, dt3], 
-        pi_coeffs=(PI_1, PI_2, PI_3),
         duration=0.3,  # 你可以自由修改这里的启动时间，比如 1.5 秒
         steps=50      # 步数跟着等比调整
     )
-
-    move(ser, mt3, dt3, target= get_motor3_horizon_position(dt1, dt2), duration=0.5)
+    move(ser, mt0, dt0, target=q0, duration=5,tau=0)
+    move(ser, mt1, dt1, target=q1, duration=5,tau=tau1)
+    move(ser, mt2, dt2, target=q2, duration=5,tau=tau2)
+    move(ser, mt3, dt3, target=q3, duration=5,tau=tau3)
     time.sleep(0.5)
 
 
@@ -170,7 +167,7 @@ if __name__ == "__main__":
     try:
         while True:
             # 1. 重力补偿 (这里最好用真实的反馈位置 q1, q2, q3 来计算，因为这是当下的物理受力)
-            tau1, tau2, tau3 = calc_compensated_torque(dt1, dt2, dt3, (PI_1, PI_2, PI_3))
+            tau1, tau2, tau3 = calc_compensated_torque(dt1, dt2, dt3)
             # print(tau1,tau2,tau3,end=' ')
             mt3.tau = tau3
             mt2.tau = tau2

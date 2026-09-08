@@ -1,8 +1,8 @@
 import math
 import time
-from motor_driver import SerialPort, MotorCmd, MotorData, move
+from motor_driver import ArmController
 from config.config import MOTOR_OFFSETS
-from gravity import calc_compensated_torque, torque_soft_start, verify_motor_init
+from gravity import calc_compensated_torque, get_motor3_horizon_position, torque_soft_start
 
 LINK1_LENGTH = 0.3  # 第一段连杆长度，单位米
 LINK2_LENGTH = 0.3  # 第二段连杆长度，单位米
@@ -68,69 +68,48 @@ def from_world_to_joint_angles(x,y,z,wrist_offset=0.0):
 if __name__ == "__main__":
     # 测试逆运动学和正运动学
     test_x,test_y, test_z = 0.2, 0.2, 0.3
-    q0, q1, q2, q3 = from_world_to_joint_angles(test_x, test_y, test_z)
+    target = from_world_to_joint_angles(test_x, test_y, test_z)
+    if target is None:
+        raise ValueError("测试目标位置不可达")
+    q0, q1, q2, q3 = target
     print(f"Inverse Kinematics: q0={q0:.2f}, q1={q1:.2f}, q2={q2:.2f}, q3={q3:.2f}")
     print(f"Forward Kinematics: r={forward_kinematics(q1, q2)[0]:.2f}, z={forward_kinematics(q1, q2)[1]:.2f}")
-    ser = SerialPort("/dev/ttyUSB0")
-    mt0 = MotorCmd(id=0, direction=1, offset=MOTOR_OFFSETS[0])
-    mt1 = MotorCmd(id=1, direction=1, offset=MOTOR_OFFSETS[1])
-    mt2 = MotorCmd(id=2, direction=1, offset=MOTOR_OFFSETS[2])
-    mt3 = MotorCmd(id=3, direction=1, offset=MOTOR_OFFSETS[3])
-    dt0 = MotorData()
-    dt1 = MotorData()
-    dt2 = MotorData()
-    dt3 = MotorData()
+    offsets = [MOTOR_OFFSETS[index] for index in range(ArmController.MOTOR_COUNT)]
+    arm = ArmController("/dev/ttyUSB0", offsets=offsets)
+    motors, feedback = arm.motors, arm.feedback
 
-    
-    #初始化角度
-    verify_motor_init(ser, mt0, dt0, "肩部(mt0)")
-    verify_motor_init(ser, mt1, dt1, "肘部1(mt1)")
-    verify_motor_init(ser, mt2, dt2, "肘部2(mt2)")
-    verify_motor_init(ser, mt3, dt3, "手腕(mt3)")
+    # 初始化反馈：ArmController 内部按 id 0..3 轮询同一串口。
+    for _ in range(10):
+        arm.get_joint_positions()
+        time.sleep(0.005)
+
     torque_soft_start(
-        ser_list=[ser, ser, ser, ser], 
-        mt_list=[mt0, mt1, mt2, mt3], 
-        dt_list=[dt0, dt1, dt2, dt3], 
-        duration=0.3,  # 你可以自由修改这里的启动时间，比如 1.5 秒
-        steps=50      # 步数跟着等比调整
+        ser_list=[arm.ser] * ArmController.MOTOR_COUNT,
+        mt_list=motors,
+        dt_list=feedback,
+        duration=0.3,
+        steps=50,
     )
     time.sleep(0.5)
-    try:
-            while True:
-                # 1. 重力补偿 (这里最好用真实的反馈位置 q1, q2, q3 来计算，因为这是当下的物理受力)
-                tau1, tau2, tau3 = calc_compensated_torque(dt1, dt2, dt3)
-                # print(tau1,tau2,tau3,end=' ')
-                mt3.tau = tau3
-                mt2.tau = tau2
-                mt1.tau = tau1
-                mt0.tau = 0
-                move(ser, mt0, dt0, target=q0, duration=5,tau=0)
-                move(ser, mt1, dt1, target=q1, duration=5,tau=tau1)
-                move(ser, mt2, dt2, target=q2, duration=5,tau=tau2)
-                move(ser, mt3, dt3, target=q3, duration=5,tau=tau3)
-                ser.sendRecv(mt0, dt0)
-                ser.sendRecv(mt1, dt1)
-                ser.sendRecv(mt2, dt2)
-                ser.sendRecv(mt3, dt3)
-    
-                print(f"ID:0 | P:{dt0.q:>+7.2f} | V:{dt0.dq:>+7.2f}  "
-                  f"ID:1 | P:{dt1.q:>+7.2f} | V:{dt1.dq:>+7.2f}  "
-                  f"ID:2 | P:{dt2.q:>+7.2f} | V:{dt2.dq:>+7.2f}  "
-                  f"ID:3 | P:{dt3.q:>+7.2f} | V:{dt3.dq:>+7.2f}   ", end='\r')
-                
-                time.sleep(0.01)
-    
-    
-    
-    except KeyboardInterrupt:
-        mt0.mode = 0
-        mt1.mode = 0
-        mt2.mode = 0
-        mt3.mode = 0
-        ser.sendRecv(mt0, dt0)
-        ser.sendRecv(mt1, dt1)
-        ser.sendRecv(mt2, dt2)
-        ser.sendRecv(mt3, dt3)
 
+    target = [q0, q1, q2, q3]
+    try:
+        while True:
+            # 根据最新反馈计算补偿力矩，并通过一个统一的四电机轮询周期发送。
+            tau1, tau2, tau3 = calc_compensated_torque(feedback[1], feedback[2], feedback[3])
+            target[3] = get_motor3_horizon_position(feedback[1], feedback[2])
+            arm.send_joint_command(
+                target,
+                torques=[0.0, tau1, tau2, tau3],
+                kp=[1.0, 1.0, 1.0, 0.5],
+                kd=[0.1, 0.05, 0.025, 0.02],
+            )
+            print(" ".join(
+                f"ID:{index} | P:{data.q:+7.2f} | V:{data.dq:+7.2f}"
+                for index, data in enumerate(feedback)
+            ), end="\r")
+            time.sleep(0.01)
+    except KeyboardInterrupt:
+        arm.disable()
+        arm.close()
         print("\n程序停止")
-    

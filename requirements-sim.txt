@@ -1,3 +1,3 @@
 mujoco>=3.2,<4
 numpy>=1.26
-
+viser>=1.1,<2

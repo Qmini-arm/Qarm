@@ -21,7 +21,20 @@
 
 # 对比 MuJoCo 逆动力学与 functions.py 的 PI 经验公式
 .venv/bin/python -m qarm_sim compare-gravity --q 0 0.8 0.2 0
+
+# 启动 MuJoCo + Viser FK/IK 工作台
+.venv/bin/python -m qarm_sim viser --host 127.0.0.1 --port 8080
+# mjviser 是同一个命令的别名
+# .venv/bin/python -m qarm_sim mjviser --port 8080
 ```
+
+浏览器打开 `http://127.0.0.1:8080`。界面包含三组控件：
+
+- **FK / 关节空间**：拖动 `joint_1..joint_4` 角度，实时更新 MuJoCo CAD mesh、末端位置和四元数。
+- **IK / 末端位置**：输入目标 XYZ，使用 MuJoCo Jacobian 阻尼最小二乘求位置 IK；初值可选当前 FK 或零位。
+- **functions.py / 平面参考**：调用现有 `functions.py` 的二维 `forward_kinematics(r,z)` 和 `inverse_kinematics(r,z)`，用于对比经验平面模型。它只涉及两连杆参考，不会改变 MuJoCo 四轴状态。
+
+Viser 工作台的 IK 只约束末端 XYZ，不约束末端姿态；四个自由度不能承诺任意六维位姿。
 
 `compare-gravity` 中 MuJoCo 姿态设为给定 `q`，速度和加速度设为零，先执行
 `mj_forward`，再将 `qacc=0` 后执行 `mj_inverse`；输出的 `qfrc_inverse` 是静态

@@ -8,6 +8,8 @@ from qarm_sim import (
     QArmMujocoEnv,
     compare_gravity_compensation,
     empirical_gravity_compensation,
+    forward_kinematics,
+    solve_position_ik,
 )
 
 
@@ -126,3 +128,21 @@ def test_gravity_comparison_reports_joint_aligned_errors() -> None:
         comparison.empirical_torque_nm - comparison.mujoco_torque_nm,
     )
     assert comparison.max_absolute_error_nm >= 0.0
+
+
+def test_fk_and_position_ik_round_trip() -> None:
+    source = np.array([0.0, 0.8, 0.2, 0.0])
+    with QArmMujocoEnv() as environment:
+        pose = forward_kinematics(environment, source)
+        result = solve_position_ik(
+            environment,
+            pose.position_m,
+            seed_rad=np.zeros(4),
+            position_tolerance_m=1e-5,
+        )
+        recovered = forward_kinematics(environment, result.position_rad)
+
+    assert result.converged
+    assert result.error_norm_m < 1e-5
+    assert np.linalg.norm(recovered.position_m - pose.position_m) < 1e-5
+    assert np.all(result.position_rad >= np.array([-np.pi, -1.75, -2.62, -2.094395102]))

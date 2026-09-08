@@ -19,6 +19,7 @@ from .gravity_compare import (
     DEFAULT_PI_COEFFICIENTS,
     compare_gravity_compensation,
 )
+from .viser_app import run_viser
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -51,6 +52,13 @@ def _parser() -> argparse.ArgumentParser:
         metavar=("PI1", "PI2", "PI3"),
         help="legacy empirical coefficients in N m",
     )
+
+    viser_command = commands.add_parser(
+        "viser", aliases=["mjviser"], help="open the Viser FK/IK workbench"
+    )
+    viser_command.add_argument("--model", type=Path, default=DEFAULT_MODEL_PATH)
+    viser_command.add_argument("--host", default="127.0.0.1")
+    viser_command.add_argument("--port", type=int, default=8080)
 
     demo = commands.add_parser(
         "demo",
@@ -328,6 +336,9 @@ def main(argv: list[str] | None = None) -> int:
             return command_validate(args)
         if args.command == "compare-gravity":
             return command_compare_gravity(args)
+        if args.command in ("viser", "mjviser"):
+            run_viser(model_path=args.model, host=args.host, port=args.port)
+            return 0
         if args.command == "demo":
             return command_demo(args)
         raise AssertionError(f"unhandled command {args.command!r}")

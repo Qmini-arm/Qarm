@@ -6,6 +6,7 @@ from dataclasses import dataclass
 import threading
 from pathlib import Path
 import xml.etree.ElementTree as ET
+import json
 
 @dataclass
 class MotorCmd:
@@ -353,6 +354,115 @@ class ArmController:
         self._stop_event.clear()
         self._motion_thread = threading.Thread(target=_trajectory_task, name="qmini-arm-motion", daemon=True)
         self._motion_thread.start()
+
+    def wait_motion(self, timeout=None):
+        """等待当前 MoveJ 完成；返回是否在超时前完成。"""
+        thread = self._motion_thread
+        if thread is None:
+            return True
+        thread.join(timeout=timeout)
+        return not thread.is_alive()
+
+    def record_trajectory(self, path=None, duration=None, sample_period=0.02,
+                          kp=None, kd=None, stop_on_interrupt=True):
+        """拖动示教并采样关节轨迹。
+
+        示教采用零位置刚度（kp=0）、小阻尼和实时重力补偿，操作者可以直接
+        拖动机械臂。轨迹文件为 JSON，包含 ``time``（秒）和 ``q``（弧度）。
+        ``duration=None`` 时按 Ctrl-C 结束。该函数是阻塞的，返回采样点列表。
+        """
+        if sample_period <= 0:
+            raise ValueError("sample_period 必须大于 0")
+        if duration is not None and duration <= 0:
+            raise ValueError("duration 必须大于 0 或为 None")
+        kp_values = [0.0] * self.MOTOR_COUNT if kp is None else list(kp)
+        kd_values = [0.05] * self.MOTOR_COUNT if kd is None else list(kd)
+        if len(kp_values) != self.MOTOR_COUNT or len(kd_values) != self.MOTOR_COUNT:
+            raise ValueError("kp 和 kd 必须包含四个关节值")
+
+        self.stop_motion()
+        self.get_joint_positions()
+        started = time.monotonic()
+        samples = []
+        try:
+            while True:
+                elapsed = time.monotonic() - started
+                if duration is not None and elapsed > duration:
+                    break
+                # 先读取真实位置，再以该位置作为软位置目标，避免拖动时跳变。
+                self.get_joint_positions()
+                with self._state_lock:
+                    q = [float(data.q) for data in self.feedback]
+                from gravity import calc_compensated_torque
+                tau1, tau2, tau3 = calc_compensated_torque(
+                    self.feedback[1], self.feedback[2], self.feedback[3])
+                torques = [0.0, tau1, tau2, tau3]
+                for i, motor in enumerate(self.motors):
+                    motor.mode = 1
+                    motor.q = q[i]
+                    motor.dq = 0.0
+                    motor.tau = torques[i]
+                    motor.kp = float(kp_values[i])
+                    motor.kd = float(kd_values[i])
+                    self.ser.sendRecv(motor, self.feedback[i])
+                samples.append({"time": elapsed, "q": q})
+                time.sleep(sample_period)
+        except KeyboardInterrupt:
+            if not stop_on_interrupt:
+                raise
+        finally:
+            if stop_on_interrupt:
+                self.disable()
+        if not samples:
+            raise RuntimeError("未采集到轨迹点")
+        if path is not None:
+            self.save_trajectory(path, samples)
+        return samples
+
+    @staticmethod
+    def save_trajectory(path, samples):
+        """保存示教轨迹 JSON；写入前校验每个点的四轴角度。"""
+        points = []
+        previous_time = 0.0
+        for point in samples:
+            if not isinstance(point, dict) or "q" not in point:
+                raise ValueError("轨迹点必须是包含 q 的字典")
+            q = [float(v) for v in point["q"]]
+            if len(q) != ArmController.MOTOR_COUNT or not all(math.isfinite(v) for v in q):
+                raise ValueError("轨迹点 q 必须包含四个有限角度")
+            timestamp = float(point.get("time", len(points)))
+            if not math.isfinite(timestamp) or timestamp < previous_time:
+                raise ValueError("轨迹时间戳必须为非负且单调递增")
+            points.append({"time": timestamp, "q": q})
+            previous_time = timestamp
+        if not points:
+            raise ValueError("轨迹不能为空")
+        payload = {"version": 1, "joint_count": ArmController.MOTOR_COUNT, "points": points}
+        output = Path(path)
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+    def replay_trajectory(self, path, speed=1.0, kp=None, kd=None, start_duration=2.0):
+        """读取示教 JSON，按时间间隔逐段调用 ``moveJ`` 回放。"""
+        if speed <= 0:
+            raise ValueError("speed 必须大于 0")
+        if start_duration <= 0:
+            raise ValueError("start_duration 必须大于 0")
+        payload = json.loads(Path(path).read_text(encoding="utf-8"))
+        points = payload.get("points") if isinstance(payload, dict) else payload
+        if not isinstance(points, list) or not points:
+            raise ValueError("轨迹文件缺少 points")
+        previous_time = 0.0
+        for index, point in enumerate(points):
+            q = self._validate_target(point["q"])
+            timestamp = float(point.get("time", previous_time))
+            if not math.isfinite(timestamp) or timestamp < previous_time:
+                raise ValueError("轨迹时间戳必须单调递增")
+            delta = timestamp - previous_time
+            duration = start_duration if index == 0 else max(delta / speed, 0.02)
+            self.moveJ(q, duration=duration, kp=kp, kd=kd)
+            self.wait_motion()
+            previous_time = max(timestamp, previous_time)
 
     def stop_motion(self):
         self._stop_event.set()

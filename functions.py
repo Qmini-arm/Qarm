@@ -186,9 +186,9 @@ if __name__ == "__main__":
     # mass 和质心位置估算：PI = mass * 9.80665 * sqrt(com_y² + com_z²)。
     # 当前补偿模型假定各段在同一平面内，并把这些值作为 cos() 项的幅值；
     # URDF 的 CAD 零位还可能带有相位偏移，首次上电应从较小比例开始验证。
-    PI_1 = 3.6  # link_2: 0.676212997 kg, r_com=0.258230863 m
+    PI_1 = 4.4  # link_2: 0.676212997 kg, r_com=0.258230863 m
     PI_2 = 1.712549  # link_3: 0.676213000 kg, r_com=0.258249095 m
-    PI_3 = 0.002857  # link_6: 0.016653600 kg, r_com=0.017495892 m
+    PI_3 = 0.00  # link_6: 0.016653600 kg, r_com=0.017495892 m
     
     #初始化角度
     verify_motor_init(ser, mt0, dt0, "肩部(mt0)")
@@ -218,7 +218,7 @@ if __name__ == "__main__":
             mt2.tau = tau2
             mt1.tau = tau1
             mt1.kd=0.05
-            mt2.kd=0.05
+            mt2.kd=0.025
             mt0.tau = 0
             mt3.q = get_motor3_horizon_position(dt1, dt2)  # 始终保持手腕水平
             mt3.kp = 0.5

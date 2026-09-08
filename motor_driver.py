@@ -1,9 +1,13 @@
-import serial
-import struct
 import math
+import struct
+import threading
 import time
 from dataclasses import dataclass
-import threading
+
+try:
+    import serial
+except ModuleNotFoundError:  # Simulation must remain usable without pyserial.
+    serial = None
 
 @dataclass
 class MotorCmd:
@@ -28,12 +32,56 @@ class MotorData:
     merror: int = 0
 
 class SerialPort:
+    """M8010 transport.
+
+    A normal device path opens the physical serial bus.  ``"mujoco://"``
+    selects the local Qarm simulation while keeping the same ``sendRecv`` API.
+    The simulation works without pyserial and exposes its environment through
+    :attr:`simulation` for deterministic stepping, state inspection or viewing.
+    """
+
     # 初始化
-    def __init__(self, port, baudrate=4000000):
+    def __init__(
+        self,
+        port,
+        baudrate=4000000,
+        *,
+        model_path=None,
+        realtime=True,
+        initial_qpos=None,
+        realtime_factor=1.0,
+    ):
+        self.simulation = None
+        port_text = str(port)
+        if port_text == "mujoco" or port_text.startswith("mujoco://"):
+            from qarm_sim import DEFAULT_MODEL_PATH, QArmMujocoEnv
+
+            embedded_path = (
+                port_text[len("mujoco://") :]
+                if port_text.startswith("mujoco://")
+                else ""
+            )
+            selected_model = model_path or embedded_path or DEFAULT_MODEL_PATH
+            self.simulation = QArmMujocoEnv(
+                selected_model,
+                initial_qpos=initial_qpos,
+                realtime_factor=realtime_factor,
+            )
+            # Keep compatibility with callers that inspect serial.is_open or
+            # explicitly invoke serial.close().
+            self.serial = self.simulation
+            if realtime:
+                self.simulation.start_realtime()
+            return
+
         # 尝试连接串口
+        if serial is None:
+            print("缺少 pyserial，无法打开真实串口；仿真请使用 SerialPort('mujoco://')")
+            self.serial = None
+            return
         try:
             self.serial = serial.Serial(port, baudrate, timeout=0.01)
-        except Exception as e:
+        except (OSError, ValueError) as e:
             print(f"打开串口 {port} 失败: {e}")
             self.serial = None
 
@@ -41,6 +89,9 @@ class SerialPort:
     def sendRecv(self, cmd: MotorCmd, data: MotorData):
         if not self.serial or not self.serial.is_open:
             return False
+
+        if self.simulation is not None:
+            return self.simulation.send_recv(cmd, data)
 
         # 1. 应用方向和偏置
         raw_tau = cmd.tau * cmd.direction
@@ -135,6 +186,40 @@ class SerialPort:
                     crc >>= 1
         return crc
 
+    def close(self):
+        """Close either the physical transport or the simulation loop."""
+
+        if self.simulation is not None:
+            self.simulation.close()
+        elif self.serial is not None and self.serial.is_open:
+            self.serial.close()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_):
+        self.close()
+
+
+class MujocoSerialPort(SerialPort):
+    """Explicit drop-in simulation transport for existing motor code."""
+
+    def __init__(
+        self,
+        model_path=None,
+        *,
+        realtime=True,
+        initial_qpos=None,
+        realtime_factor=1.0,
+    ):
+        super().__init__(
+            "mujoco://",
+            model_path=model_path,
+            realtime=realtime,
+            initial_qpos=initial_qpos,
+            realtime_factor=realtime_factor,
+        )
+
 
 
 def move(ser, cmd, data, target=1.0, duration=1.0, kp=1.0, kd=0.1):
@@ -202,11 +287,11 @@ def move(ser, cmd, data, target=1.0, duration=1.0, kp=1.0, kd=0.1):
 
 def main_single_motor():
     # 1. 初始化串口（请根据你的电脑修改串口号，Linux通常是 /dev/ttyUSB0）
-    serial = SerialPort("/dev/ttyUSB0") 
+    _serial_port = SerialPort("/dev/ttyUSB0")
     # 2. 初始化电机
     # 其中id为电机ID，direction是旋转方向（+1为逆时针、-1为顺时针），offset是零点位置
-    mt2 = MotorCmd(id=0, direction=1, offset=3.137)
-    dt2 = MotorData()
+    _motor = MotorCmd(id=0, direction=1, offset=3.137)
+    _data = MotorData()
 
 if __name__ == "__main__":
     main_single_motor()

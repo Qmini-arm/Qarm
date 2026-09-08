@@ -1,0 +1,141 @@
+<mujoco model="qmini_arm">
+  <default>
+    <default class="robot">
+      <default class="visual">
+        <geom contype="0" conaffinity="0" group="2" />
+      </default>
+      <default class="collision">
+        <geom contype="1" conaffinity="1" group="3" />
+      </default>
+    </default>
+    <default class="floor">
+      <geom type="plane" size="2 2 0.05" material="groundplane" />
+    </default>
+  </default>
+
+  <compiler angle="radian" meshdir="." balanceinertia="true" autolimits="true" />
+  <option timestep="0.001" gravity="0 0 -9.80665" integrator="implicitfast"
+          solver="Newton" iterations="100" />
+
+  <visual>
+    <global offwidth="3840" offheight="2160" />
+    <headlight ambient="0.35 0.35 0.35" diffuse="0.8 0.8 0.8"
+               specular="0.25 0.25 0.25" />
+    <rgba haze="0.15 0.25 0.35 1" />
+  </visual>
+
+  <worldbody>
+    <!-- The arm is bolted to the table: this root intentionally has no freejoint. -->
+    <body name="qarm_root" childclass="robot" pos="0 0 0.0232">
+      <body name="base_link" quat="0.6595 0.2558 -0.659 0.2556">
+        <inertial pos="-0.001443936 0.000095279 0.000025880" mass="0.594063035" diaginertia="0.000935107 0.00055038 0.000529948" />
+        <geom name="base_link_collision_0" quat="0.7071 0 0.7071 0" type="cylinder" size="0.04825 0.02115" class="collision" />
+        <geom name="base_link_collision_1" pos="-0.018149996 0.000000291 -0.000000098" quat="0.6609 -0.2513 -0.2513 -0.6609" type="box" size="0.055 0.005 0.07944" class="collision" />
+        <geom name="base_link_visual_0" type="mesh" mesh="base_link_motor" material="motor_gray" class="visual" />
+        <geom name="base_link_visual_1" pos="-0.013149996 -0.040727332 -0.045814406" quat="0.6451 0.2897 -0.6451 -0.2897" type="mesh" mesh="base_link_base_pair" material="link_silver" class="visual" />
+        <body name="link_1">
+          <inertial pos="0.076902896 -0.000540190 -0.000692581" mass="0.567450382" diaginertia="0.000373485 0.00059489 0.000625051" />
+          <joint name="joint_1" type="hinge" range="-3.141592654 3.141592654"
+                 axis="1 0 0" damping="0.08" armature="0.001" />
+          <geom name="link_1_collision_0" pos="0.041150004 0.000000013 -0.000000002" quat="0.6609 -0.2513 -0.2513 -0.6609" type="box" size="0.045 0.02 0.0215" class="collision" />
+          <geom name="link_1_collision_1" pos="0.082449884 0.000464880 0.000523357" quat="-0.1263 -0.3322 -0.8737 0.3322" type="cylinder" size="0.04825 0.02115" class="collision" />
+          <geom name="link_1_visual_0" pos="0.021150004 0.000000013 -0.000000002" quat="0.6609 -0.2513 -0.2513 -0.6609" type="mesh" mesh="link_1_joint_bracket" material="link_silver" class="visual" />
+          <geom name="link_1_visual_1" pos="0.082449884 0.000464880 0.000523357" quat="0.7071 0 0.5285 -0.4698" type="mesh" mesh="base_link_motor" material="motor_gray" class="visual" />
+          <body name="link_2" pos="0.082449884 0.000464880 0.000523357" quat="0.5002 0.4998 0.0418 -0.7059">
+            <inertial pos="0.016355333 0.193045983 -0.171512178" mass="0.676212997" diaginertia="0.005975646 0.002778247 0.003380604" />
+            <joint name="joint_2" type="hinge" range="-1.75 1.75"
+                   axis="1 0 0" damping="0.08" armature="0.001" />
+            <geom name="link_2_collision_0" pos="0.028650004 0.117945600 -0.104848942" quat="0.2513 0.6609 0.6609 -0.2513" type="box" size="0.15015 0.0075 0.0375" class="collision" />
+            <geom name="link_2_collision_1" pos="0.013000008 0.224214994 -0.199318371" quat="0.4698 0.5285 -0.4698 -0.5285" type="cylinder" size="0.04825 0.02115" class="collision" />
+            <geom name="link_2_visual_0" pos="0.026150004 0.224214862 -0.199318093" quat="0.2513 0.6609 0.6609 -0.2513" type="mesh" mesh="link_2_arm_link" material="link_silver" class="visual" />
+            <geom name="link_2_visual_1" pos="0.013000008 0.224214994 -0.199318371" quat="0 0 -0.6644 -0.7474" type="mesh" mesh="base_link_motor" material="motor_gray" class="visual" />
+            <body name="link_3" pos="0.013000008 0.224214994 -0.199318371" quat="0 0 -0.6644 -0.7474">
+              <inertial pos="0.016353625 -0.193059219 0.171524730" mass="0.676213" diaginertia="0.0059635475 0.00277030433 0.00337659291" />
+              <joint name="joint_3" type="hinge" range="-2.62 2.62"
+                     axis="1 0 0" damping="0.08" armature="0.001" />
+              <geom name="link_3_collision_0" pos="0.028650004 -0.117945574 0.104848938" quat="0.6609 -0.2513 -0.2513 -0.6609" type="box" size="0.15015 0.0075 0.0375" class="collision" />
+              <geom name="link_3_collision_1" pos="0.013000008 -0.224214968 0.199318367" quat="0.5285 -0.4698 -0.5285 0.4698" type="cylinder" size="0.04825 0.02115" class="collision" />
+              <geom name="link_3_visual_0" pos="0.026150004 -0.224214836 0.199318089" quat="0.6609 -0.2513 -0.2513 -0.6609" type="mesh" mesh="link_2_arm_link" material="link_silver" class="visual" />
+              <geom name="link_3_visual_1" pos="0.013000008 -0.224214968 0.199318367" quat="0 0 0.7474 -0.6644" type="mesh" mesh="base_link_motor" material="motor_gray" class="visual" />
+              <body name="link_6" pos="0.013000008 -0.224214968 0.199318367" quat="0 0 0.7474 -0.6644">
+                <inertial pos="0.021295905 -0.013071630 0.011629218" mass="0.0166536" diaginertia="1.4346087e-05 7.453285e-06 8.467991e-06" />
+                <joint name="joint_4" type="hinge" range="-2.094395102 2.094395102"
+                       axis="1 0 0" damping="0.08" armature="0.001" />
+                <geom name="link_6_collision" pos="0.008650004 -0.011444917 0.010174086" quat="-0.2513 -0.6609 0.6609 -0.2513" type="box" size="0.0447 0.0175 0.0295" class="collision" />
+                <geom name="link_6_visual" pos="0.026150004 0.000000013 -0.000000002" quat="-0.2513 -0.6609 0.6609 -0.2513" type="mesh" mesh="link_6_tool_mount" material="tool_gray" class="visual" />
+                <body name="tool0" pos="0.008650004 -0.044843211 0.039863329" quat="-0.2513 -0.6609 0.6609 -0.2513">
+                  <site name="tool0_site" type="sphere" size="0.012"
+                        rgba="0.95 0.25 0.10 1" group="3" />
+                </body>
+              </body>
+            </body>
+          </body>
+        </body>
+      </body>
+    </body>
+    <light pos="0 0 2." dir="0 0 -1" directional="true" />
+    <geom name="floor" class="floor" size="0 0 0.05" />
+    <camera name="overview" mode="targetbody" target="link_3"
+            pos="0.95 -1.20 0.72" />
+  </worldbody>
+
+  <asset>
+    <material name="motor_gray" rgba="0.27 0.29 0.32 1.0" />
+    <material name="link_silver" rgba="0.72 0.74 0.77 1.0" />
+    <material name="tool_gray" rgba="0.40 0.43 0.47 1.0" />
+    <mesh name="base_link_motor" file="meshes/meshes/visual/motor.stl" />
+    <mesh name="base_link_base_pair" file="meshes/meshes/visual/base_pair.stl" />
+    <mesh name="link_1_joint_bracket" file="meshes/meshes/visual/joint_bracket.stl" />
+    <mesh name="link_2_arm_link" file="meshes/meshes/visual/arm_link.stl" />
+    <mesh name="link_6_tool_mount" file="meshes/meshes/visual/tool_mount.stl" />
+    <texture type="2d" name="groundplane" builtin="checker" mark="edge" rgb1="0.2 0.3 0.4" rgb2="0.1 0.2 0.3" markrgb="0.8 0.8 0.8" width="300" height="300" />
+    <material name="groundplane" texture="groundplane" texuniform="true" texrepeat="5 5" reflectance="0.2" />
+    <texture type="skybox" builtin="gradient" rgb1="0.3 0.5 0.7" rgb2="0 0 0" width="512" height="3072" />
+  </asset>
+
+  <actuator>
+    <!-- M8010-6 public maximum output torque; continuous torque is not identified. -->
+    <motor name="joint_1_motor" joint="joint_1" gear="1"
+           ctrllimited="true" ctrlrange="-23.7 23.7"
+           forcelimited="true" forcerange="-23.7 23.7" />
+    <motor name="joint_2_motor" joint="joint_2" gear="1"
+           ctrllimited="true" ctrlrange="-23.7 23.7"
+           forcelimited="true" forcerange="-23.7 23.7" />
+    <motor name="joint_3_motor" joint="joint_3" gear="1"
+           ctrllimited="true" ctrlrange="-23.7 23.7"
+           forcelimited="true" forcerange="-23.7 23.7" />
+    <motor name="joint_4_motor" joint="joint_4" gear="1"
+           ctrllimited="true" ctrlrange="-23.7 23.7"
+           forcelimited="true" forcerange="-23.7 23.7" />
+  </actuator>
+
+  <!-- Adjacent links share a joint and may overlap in their simplified shapes. -->
+  <contact>
+    <exclude body1="base_link" body2="link_1" />
+    <exclude body1="link_1" body2="link_2" />
+    <exclude body1="link_2" body2="link_3" />
+    <exclude body1="link_3" body2="link_6" />
+    <exclude body1="link_6" body2="tool0" />
+  </contact>
+
+  <sensor>
+    <jointpos name="joint_1_position" joint="joint_1" />
+    <jointpos name="joint_2_position" joint="joint_2" />
+    <jointpos name="joint_3_position" joint="joint_3" />
+    <jointpos name="joint_4_position" joint="joint_4" />
+    <jointvel name="joint_1_velocity" joint="joint_1" />
+    <jointvel name="joint_2_velocity" joint="joint_2" />
+    <jointvel name="joint_3_velocity" joint="joint_3" />
+    <jointvel name="joint_4_velocity" joint="joint_4" />
+    <actuatorfrc name="joint_1_torque" actuator="joint_1_motor" />
+    <actuatorfrc name="joint_2_torque" actuator="joint_2_motor" />
+    <actuatorfrc name="joint_3_torque" actuator="joint_3_motor" />
+    <actuatorfrc name="joint_4_torque" actuator="joint_4_motor" />
+    <framepos name="tool0_position" objtype="site" objname="tool0_site" />
+    <framequat name="tool0_orientation" objtype="site" objname="tool0_site" />
+  </sensor>
+
+  <keyframe>
+    <key name="home" qpos="0 0 0 0" />
+  </keyframe>
+</mujoco>

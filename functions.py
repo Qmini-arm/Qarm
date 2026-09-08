@@ -1,7 +1,11 @@
+import argparse
 import math
+import threading
 import time
-from motor_driver import SerialPort, MotorCmd, MotorData, move
+
 from config.config import MOTOR_OFFSETS
+from motor_driver import MotorCmd, MotorData, SerialPort, move
+
 
 def inverse_kinematics(r, z):
     """
@@ -49,11 +53,13 @@ def verify_motor_init(ser, mt, dt, motor_name):
     success_count = 0
     # 循环读取，直到连续获得 10 次稳定反馈
     while success_count < 10:
-        ser.sendRecv(mt, dt)
+        received = ser.sendRecv(mt, dt)
         
         # 验证条件：根据你的驱动库，如果通信失败 dt.q 可能是 None，或者 id 对不上
         # 这里做一个基础的防空值判断（如果你的库失败时返回0.0，你需要根据实际情况调整）
-        if dt is not None: 
+        if received and dt is not None and all(
+            value is not None for value in (dt.q, dt.dq, dt.tau)
+        ):
             success_count += 1
         else:
             success_count = 0 # 一旦断掉，重新计数
@@ -167,10 +173,58 @@ def get_motor3_horizon_position(dt1, dt2):
     target_q3 = dt2.q - dt1.q + math.pi / 2  # +90度，使手臂水平
     return target_q3
 
-if __name__ == "__main__":
+def _parse_main_args():
+    parser = argparse.ArgumentParser(
+        description="Qarm gravity compensation loop (hardware or MuJoCo)"
+    )
+    parser.add_argument(
+        "--sim",
+        action="store_true",
+        help="use the local MuJoCo M8010 transport instead of /dev/ttyUSB0",
+    )
+    parser.add_argument(
+        "--initial-q",
+        type=float,
+        nargs=4,
+        default=(0.0, 0.8, 0.2, 0.0),
+        metavar=("J1", "J2", "J3", "J4"),
+        help="initial simulated joint position in radians",
+    )
+    parser.add_argument(
+        "--realtime-factor",
+        type=float,
+        default=1.0,
+        help="MuJoCo wall-clock speed multiplier (simulation only)",
+    )
+    parser.add_argument(
+        "--viewer",
+        action="store_true",
+        help="show the MuJoCo viewer while the control loop runs (simulation only)",
+    )
+    return parser.parse_args()
+
+
+def main():
+    args = _parse_main_args()
+    if args.realtime_factor <= 0.0:
+        raise SystemExit("--realtime-factor must be positive")
+    if args.viewer and not args.sim:
+        raise SystemExit("--viewer requires --sim")
+
+    # Explicit --sim is the only path that can select MuJoCo.  This keeps a
+    # typo from silently replacing a requested hardware run with simulation.
+    if args.sim:
+        ser = SerialPort(
+            "mujoco://",
+            initial_qpos=args.initial_q,
+            realtime=True,
+            realtime_factor=args.realtime_factor,
+        )
+    else:
+        ser = SerialPort("/dev/ttyUSB0")
+
     
     # 实例化电机
-    ser = SerialPort("/dev/ttyUSB0")
     mt0 = MotorCmd(id=0, direction=1, offset=MOTOR_OFFSETS[0])
     mt1 = MotorCmd(id=1, direction=1, offset=MOTOR_OFFSETS[1])
     mt2 = MotorCmd(id=2, direction=1, offset=MOTOR_OFFSETS[2])
@@ -208,39 +262,7 @@ if __name__ == "__main__":
     time.sleep(0.5)
 
 
-
-    try:
-        while True:
-            # 1. 重力补偿 (这里最好用真实的反馈位置 q1, q2, q3 来计算，因为这是当下的物理受力)
-            tau1, tau2, tau3 = calc_compensated_torque(dt1, dt2, dt3, (PI_1, PI_2, PI_3))
-            # print(tau1,tau2,tau3,end=' ')
-            mt3.tau = tau3
-            mt2.tau = tau2
-            mt1.tau = tau1
-            mt1.kd=0.05
-            mt2.kd=0.025
-            mt0.tau = 0
-            mt3.q = get_motor3_horizon_position(dt1, dt2)  # 始终保持手腕水平
-            mt3.kp = 0.5
-            mt3.kd = 0.02
-
-            
-
-            ser.sendRecv(mt0, dt0)
-            ser.sendRecv(mt1, dt1)
-            ser.sendRecv(mt2, dt2)
-            ser.sendRecv(mt3, dt3)
-
-            print(f"ID:0 | P:{dt0.q:>+7.2f} | V:{dt0.dq:>+7.2f}  "
-              f"ID:1 | P:{dt1.q:>+7.2f} | V:{dt1.dq:>+7.2f}  "
-              f"ID:2 | P:{dt2.q:>+7.2f} | V:{dt2.dq:>+7.2f}  "
-              f"ID:3 | P:{dt3.q:>+7.2f} | V:{dt3.dq:>+7.2f}   ", end='\r')
-            
-            time.sleep(0.01)
-
-
-
-    except KeyboardInterrupt:
+    def stop_motors():
         mt0.mode = 0
         mt1.mode = 0
         mt2.mode = 0
@@ -249,5 +271,59 @@ if __name__ == "__main__":
         ser.sendRecv(mt1, dt1)
         ser.sendRecv(mt2, dt2)
         ser.sendRecv(mt3, dt3)
+        ser.close()
 
-        print("\n程序停止")
+    def control_loop(stop_event=None):
+        try:
+            while stop_event is None or not stop_event.is_set():
+                # 1. 重力补偿 (这里最好用真实的反馈位置 q1, q2, q3 来计算，因为这是当下的物理受力)
+                tau1, tau2, tau3 = calc_compensated_torque(
+                    dt1, dt2, dt3, (PI_1, PI_2, PI_3)
+                )
+                mt3.tau = tau3
+                mt2.tau = tau2
+                mt1.tau = tau1
+                mt1.kd = 0.05
+                mt2.kd = 0.025
+                mt0.tau = 0
+                mt3.q = get_motor3_horizon_position(dt1, dt2)
+                mt3.kp = 0.5
+                mt3.kd = 0.02
+
+                ser.sendRecv(mt0, dt0)
+                ser.sendRecv(mt1, dt1)
+                ser.sendRecv(mt2, dt2)
+                ser.sendRecv(mt3, dt3)
+
+                print(f"ID:0 | P:{dt0.q:>+7.2f} | V:{dt0.dq:>+7.2f}  "
+                      f"ID:1 | P:{dt1.q:>+7.2f} | V:{dt1.dq:>+7.2f}  "
+                      f"ID:2 | P:{dt2.q:>+7.2f} | V:{dt2.dq:>+7.2f}  "
+                      f"ID:3 | P:{dt3.q:>+7.2f} | V:{dt3.dq:>+7.2f}   ", end="\r")
+                time.sleep(0.01)
+        except KeyboardInterrupt:
+            print("\n程序停止")
+        finally:
+            stop_motors()
+
+    if args.viewer:
+        stop_event = threading.Event()
+        controller = threading.Thread(
+            target=control_loop,
+            args=(stop_event,),
+            name="qarm-functions-control",
+            daemon=True,
+        )
+        controller.start()
+        try:
+            ser.simulation.launch_viewer()
+        except KeyboardInterrupt:
+            print("\n程序停止")
+        finally:
+            stop_event.set()
+            controller.join(timeout=2.0)
+    else:
+        control_loop()
+
+
+if __name__ == "__main__":
+    main()

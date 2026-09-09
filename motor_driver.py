@@ -227,6 +227,14 @@ class ArmController:
         self._state_lock = threading.Lock()
         self._stop_event = threading.Event()
         self._motion_thread = None
+        # Browser controls must not start a new MoveJ thread for every slider
+        # event.  The streaming worker owns the serial cycle and only its
+        # latest target is replaced by the UI.
+        self._stream_lock = threading.RLock()
+        self._stream_stop_event = threading.Event()
+        self._stream_thread = None
+        self._stream_generation = 0
+        self._stream_target = None
 
     @staticmethod
     def _load_joint_limits(urdf_path=None):
@@ -288,6 +296,7 @@ class ArmController:
         kd_values = [0.1] * self.MOTOR_COUNT if kd is None else list(kd)
         if len(kp_values) != self.MOTOR_COUNT or len(kd_values) != self.MOTOR_COUNT:
             raise ValueError("kp 和 kd 必须包含四个关节值")
+        self.stop_streaming()
         self.stop_motion()
         for index, motor in enumerate(self.motors):
             motor.mode = 1
@@ -301,8 +310,169 @@ class ArmController:
         with self._state_lock:
             return [data.q for data in self.feedback]
 
+    @staticmethod
+    def _sample_stream_target(position, velocity, target, elapsed, response_time):
+        """Advance a critically damped target filter by ``elapsed`` seconds.
+
+        The filter keeps its position and velocity state when the browser
+        target changes.  Unlike restarting a point-to-point polynomial for
+        every slider event, it cannot inject a new start-position or velocity
+        discontinuity into the motor command stream.
+        """
+        if elapsed <= 0.0:
+            return list(position), list(velocity)
+
+        # At the requested response time the critically damped residual is
+        # below 2%, so the UI duration remains a useful response-time control.
+        omega = 6.0 / max(response_time, 1e-6)
+        decay = math.exp(-omega * elapsed)
+        positions, velocities = [], []
+        for current, current_velocity, goal in zip(position, velocity, target):
+            error = current - goal
+            coefficient = current_velocity + omega * error
+            next_error = (error + coefficient * elapsed) * decay
+            next_velocity = (
+                current_velocity - omega * coefficient * elapsed
+            ) * decay
+            positions.append(goal + next_error)
+            velocities.append(next_velocity)
+        return positions, velocities
+
+    def start_streaming(self, targetQ, duration=0.5, kp=None, kd=None,
+                        control_period=0.005):
+        """Start one persistent, feedback-driven target stream.
+
+        ``update_stream_target`` can then replace the target without stopping
+        or restarting the worker.  This is intended for interactive clients
+        such as Viser, where a slider can produce many updates during one
+        physical movement.
+        """
+        target = self._validate_target(targetQ)
+        duration = float(duration)
+        control_period = float(control_period)
+        if not math.isfinite(duration) or duration <= 0.0:
+            raise ValueError("duration 必须是大于 0 的有限数值")
+        if not math.isfinite(control_period) or control_period <= 0.0:
+            raise ValueError("control_period 必须是大于 0 的有限数值")
+        kp_values = [1.0] * self.MOTOR_COUNT if kp is None else [float(v) for v in kp]
+        kd_values = [0.1] * self.MOTOR_COUNT if kd is None else [float(v) for v in kd]
+        if len(kp_values) != self.MOTOR_COUNT or len(kd_values) != self.MOTOR_COUNT:
+            raise ValueError("kp 和 kd 必须包含四个关节值")
+        if not all(math.isfinite(v) for v in kp_values + kd_values):
+            raise ValueError("kp 和 kd 必须是有限数值")
+
+        # Only one owner may use the serial port.  The old MoveJ worker is
+        # stopped before the stream reads its initial feedback pose.
+        self.stop_streaming()
+        self.stop_motion()
+        self.get_joint_positions()
+        with self._state_lock:
+            start = [float(data.q) for data in self.feedback]
+
+        with self._stream_lock:
+            self._stream_generation += 1
+            generation = self._stream_generation
+            stop_event = threading.Event()
+            self._stream_stop_event = stop_event
+            self._stream_target = list(target)
+            self._stream_thread = threading.Thread(
+                target=self._stream_task,
+                args=(
+                    start,
+                    target,
+                    duration,
+                    kp_values,
+                    kd_values,
+                    control_period,
+                    stop_event,
+                    generation,
+                ),
+                name="qmini-arm-stream",
+                daemon=True,
+            )
+            self._stream_thread.start()
+
+    def update_stream_target(self, targetQ):
+        """Replace the active stream target without restarting its worker."""
+        target = self._validate_target(targetQ)
+        with self._stream_lock:
+            thread = self._stream_thread
+            if thread is None or not thread.is_alive() or self._stream_stop_event.is_set():
+                raise RuntimeError("实机目标流尚未启动")
+            self._stream_target = list(target)
+
+    def _stream_task(self, start, target, duration, kp_values,
+                     kd_values, control_period, stop_event, generation):
+        from gravity import calc_compensated_torque
+
+        command_q = list(start)
+        command_dq = [0.0] * self.MOTOR_COUNT
+        last_update = time.monotonic()
+        next_deadline = last_update
+
+        try:
+            for index, motor in enumerate(self.motors):
+                motor.mode = 1
+                motor.kp = kp_values[index]
+                motor.kd = kd_values[index]
+
+            while not stop_event.is_set():
+                with self._stream_lock:
+                    if generation != self._stream_generation:
+                        return
+                    latest_target = list(self._stream_target)
+
+                now = time.monotonic()
+                elapsed = min(max(now - last_update, 0.0), 0.25)
+                command_q, command_dq = self._sample_stream_target(
+                    command_q, command_dq, latest_target, elapsed, duration
+                )
+                last_update = now
+                # A feedback sample can be just outside the URDF interval at
+                # startup.  Keep every generated stream command inside the
+                # same limits used by the public target validator.
+                for index, (lower, upper) in enumerate(self.joint_limits):
+                    bounded = min(max(command_q[index], lower), upper)
+                    if bounded != command_q[index]:
+                        command_q[index] = bounded
+                        command_dq[index] = 0.0
+                tau1, tau2, tau3 = calc_compensated_torque(
+                    self.feedback[1], self.feedback[2], self.feedback[3]
+                )
+                torques = (0.0, tau1, tau2, tau3)
+                for index, (motor, data) in enumerate(zip(self.motors, self.feedback)):
+                    motor.q = command_q[index]
+                    motor.dq = command_dq[index]
+                    motor.tau = torques[index]
+                    self.ser.sendRecv(motor, data)
+
+                next_deadline += control_period
+                wait_time = next_deadline - time.monotonic()
+                if wait_time < -control_period:
+                    next_deadline = time.monotonic()
+                    wait_time = 0.0
+                stop_event.wait(max(0.0, wait_time))
+        finally:
+            with self._stream_lock:
+                if self._stream_thread is threading.current_thread():
+                    self._stream_thread = None
+
+    def stop_streaming(self):
+        """Stop the persistent target stream and wait for its serial cycle."""
+        with self._stream_lock:
+            thread = self._stream_thread
+            stop_event = self._stream_stop_event
+            self._stream_generation += 1
+            stop_event.set()
+        if thread is not None and thread is not threading.current_thread():
+            thread.join(timeout=2.0)
+        with self._stream_lock:
+            if self._stream_thread is thread and (thread is None or not thread.is_alive()):
+                self._stream_thread = None
+
     def disable(self):
         """Disable all motors with one final serialized polling cycle."""
+        self.stop_streaming()
         self.stop_motion()
         for motor in self.motors:
             motor.mode = 0
@@ -324,6 +494,7 @@ class ArmController:
         kd = [0.1] * self.MOTOR_COUNT if kd is None else list(kd)
         if len(kp) != self.MOTOR_COUNT or len(kd) != self.MOTOR_COUNT:
             raise ValueError("kp 和 kd 必须包含四个关节值")
+        self.stop_streaming()
         self.stop_motion()
 
         def _trajectory_task():
@@ -382,6 +553,7 @@ class ArmController:
         if len(kp_values) != self.MOTOR_COUNT or len(kd_values) != self.MOTOR_COUNT:
             raise ValueError("kp 和 kd 必须包含四个关节值")
 
+        self.stop_streaming()
         self.stop_motion()
         self.get_joint_positions()
         started = time.monotonic()
@@ -510,6 +682,7 @@ class ArmController:
         self._motion_thread = None
 
     def close(self):
+        self.stop_streaming()
         self.stop_motion()
         self.ser.close()
 

@@ -9,8 +9,8 @@
 * 未传 ``--enable-hardware`` 时不会导入或打开串口；
 * 传入 ``--enable-hardware`` 后仍需在浏览器中再次勾选启用；
 * 浏览器启用时先读取当前位置、同步滑条，并以同一姿态建立保持，不会跳到仿真初始姿态；
-* 实机目标通过 ``ArmController.moveJ`` 发送，因此沿用仓库内的限位、轨迹和
-  重力补偿逻辑。
+* 实机启用后由 ``ArmController`` 的单一目标流线程发送，因此沿用仓库内的
+  限位、轨迹和重力补偿逻辑；浏览器回调只替换最新目标，不会反复重启运动线程。
 
 安装 Viser 依赖后可直接运行：
 
@@ -214,7 +214,12 @@ class QminiKinematics:
 
 
 class QarmHardwareDriver:
-    """Guarded adapter from the Viser callbacks to ``ArmController.moveJ``."""
+    """Guarded adapter from Viser callbacks to the hardware target stream.
+
+    New ``ArmController`` instances expose one persistent streaming worker.
+    The fallback to ``moveJ`` keeps this adapter usable with the small fake
+    controllers used by tests and with older controller implementations.
+    """
 
     def __init__(self, arm: Any, *, duration: float = 0.5) -> None:
         self.arm = arm
@@ -224,6 +229,12 @@ class QarmHardwareDriver:
         self._armed = False
         self._last_target: np.ndarray | None = None
         self._lock = threading.RLock()
+
+    @property
+    def _supports_streaming(self) -> bool:
+        return callable(getattr(self.arm, "start_streaming", None)) and callable(
+            getattr(self.arm, "update_stream_target", None)
+        )
 
     @property
     def enabled(self) -> bool:
@@ -262,9 +273,17 @@ class QarmHardwareDriver:
             self._enabled = False
             current = self.read_current()
             # The target is exactly the just-read pose, so enabling the browser
-            # control cannot create a midpoint jump.  moveJ keeps gravity
-            # compensation inside the repository's high-level controller.
-            self.arm.moveJ(current.tolist(), duration=max(self._duration, 0.2))
+            # control cannot create a midpoint jump.  The stream keeps one
+            # serial/control owner alive while slider events only replace its
+            # latest target.
+            if self._supports_streaming:
+                self.arm.start_streaming(
+                    current.tolist(), duration=max(self._duration, 0.2)
+                )
+            else:
+                # Compatibility with older/fake controllers that only expose
+                # the original asynchronous MoveJ API.
+                self.arm.moveJ(current.tolist(), duration=max(self._duration, 0.2))
             self._armed = True
             return current
 
@@ -295,9 +314,14 @@ class QarmHardwareDriver:
                 target, self._last_target, atol=1e-8, rtol=0.0
             ):
                 return False
-            # moveJ performs the URDF-limit validation and internal gravity
-            # compensation in the current Qarm repository.
-            self.arm.moveJ(target.tolist(), duration=self._duration)
+            if self._supports_streaming:
+                # Do not restart a trajectory or reread the physical start
+                # pose for every browser event.  The controller's persistent
+                # worker filters the new target from its current command.
+                self.arm.update_stream_target(target.tolist())
+            else:
+                # Compatibility path for older/fake controllers.
+                self.arm.moveJ(target.tolist(), duration=self._duration)
             self._last_target = target.copy()
             return True
 

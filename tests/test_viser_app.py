@@ -56,6 +56,19 @@ class FakeArm:
         self.disabled += 1
 
 
+class StreamingFakeArm(FakeArm):
+    def __init__(self) -> None:
+        super().__init__()
+        self.stream_starts: list[tuple[list[float], float]] = []
+        self.stream_updates: list[list[float]] = []
+
+    def start_streaming(self, target: list[float], duration: float = 1.0) -> None:
+        self.stream_starts.append((target, duration))
+
+    def update_stream_target(self, target: list[float]) -> None:
+        self.stream_updates.append(target)
+
+
 def test_hardware_driver_requires_takeover_and_uses_movej() -> None:
     arm = FakeArm()
     driver = QarmHardwareDriver(arm, duration=0.4)
@@ -74,6 +87,21 @@ def test_hardware_driver_requires_takeover_and_uses_movej() -> None:
     driver.disable()
     assert arm.disabled == 1
     assert not driver.command(target + 0.1)
+
+
+def test_hardware_driver_streams_targets_without_restarting_movej() -> None:
+    arm = StreamingFakeArm()
+    driver = QarmHardwareDriver(arm, duration=0.4)
+
+    driver.takeover()
+    driver.enable()
+    target = np.array([0.1, -0.2, 0.3, -0.1])
+    assert driver.command(target)
+    assert driver.command(target + 0.1)
+
+    assert arm.targets == []
+    assert arm.stream_starts == [([0.0, 0.0, 0.0, 0.0], 0.4)]
+    assert arm.stream_updates == [target.tolist(), (target + 0.1).tolist()]
 
 
 def test_hardware_driver_rejects_duration_outside_ui_range() -> None:

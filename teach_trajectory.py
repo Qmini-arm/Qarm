@@ -1,4 +1,4 @@
-"""Qmini 四轴拖动示教与 MoveJ 轨迹回放入口。
+"""Qmini 四轴拖动示教与连续插值轨迹回放入口。
 
 示例：
   python teach_trajectory.py record --port /dev/ttyUSB0 --enable-hardware --output trajectories/demo.json
@@ -13,7 +13,7 @@ from motor_driver import ArmController
 
 
 def build_parser():
-    parser = argparse.ArgumentParser(description="Qmini 拖动示教 / MoveJ 回放")
+    parser = argparse.ArgumentParser(description="Qmini 拖动示教 / 连续轨迹回放")
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument("--port", required=True, help="电机串口，例如 /dev/ttyUSB0")
     common.add_argument("--enable-hardware", action="store_true",
@@ -23,11 +23,13 @@ def build_parser():
     record.add_argument("--output", required=True, help="JSON 轨迹文件")
     record.add_argument("--duration", type=float, default=None, help="录制秒数，默认 Ctrl-C 结束")
     record.add_argument("--sample-period", type=float, default=0.02, help="采样周期（秒）")
-    replay = sub.add_parser("replay", parents=[common], help="按轨迹逐段调用 MoveJ")
+    replay = sub.add_parser("replay", parents=[common], help="按统一时间轴连续插值回放")
     replay.add_argument("--input", required=True, help="JSON 轨迹文件")
     replay.add_argument("--speed", type=float, default=1.0, help="时间缩放，越大越快")
     replay.add_argument("--start-duration", type=float, default=2.0,
                         help="到达第一个轨迹点的 MoveJ 时长（秒）")
+    replay.add_argument("--control-period", type=float, default=0.005,
+                        help="回放目标更新周期（秒），默认 0.005；实际频率受串口耗时限制")
     return parser
 
 
@@ -44,7 +46,8 @@ def main():
             samples = arm.record_trajectory(args.output, args.duration, args.sample_period)
             print(f"已保存 {len(samples)} 个轨迹点: {args.output}")
         else:
-            arm.replay_trajectory(args.input, speed=args.speed, start_duration=args.start_duration)
+            arm.replay_trajectory(args.input, speed=args.speed, start_duration=args.start_duration,
+                                  control_period=args.control_period)
             print(f"回放完成: {args.input}")
     finally:
         arm.disable()

@@ -8,6 +8,8 @@ from pathlib import Path
 import xml.etree.ElementTree as ET
 import json
 
+from joint_trajectory import JointTrajectory
+
 @dataclass
 class MotorCmd:
     motorType: int = 1
@@ -442,27 +444,64 @@ class ArmController:
         output.parent.mkdir(parents=True, exist_ok=True)
         output.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
-    def replay_trajectory(self, path, speed=1.0, kp=None, kd=None, start_duration=2.0):
-        """读取示教 JSON，按时间间隔逐段调用 ``moveJ`` 回放。"""
-        if speed <= 0:
-            raise ValueError("speed 必须大于 0")
-        if start_duration <= 0:
-            raise ValueError("start_duration 必须大于 0")
+    def replay_trajectory(self, path, speed=1.0, kp=None, kd=None, start_duration=2.0,
+                          control_period=0.005):
+        """先 MoveJ 到起点，再按统一时间轴连续发送插值位置与速度。
+
+        使用保形三次插值，经过中间采样点时速度连续，整段起止速度为零。
+        control_period 是目标更新周期；串口超时时跳过错过的更新时刻。
+        本函数阻塞到回放结束，支持 stop_motion() 和 Ctrl-C 中断。
+        """
+        for name, value in (("speed", speed), ("start_duration", start_duration),
+                            ("control_period", control_period)):
+            if not math.isfinite(value) or value <= 0:
+                raise ValueError(f"{name} 必须是大于 0 的有限数值")
         payload = json.loads(Path(path).read_text(encoding="utf-8"))
         points = payload.get("points") if isinstance(payload, dict) else payload
         if not isinstance(points, list) or not points:
             raise ValueError("轨迹文件缺少 points")
-        previous_time = 0.0
-        for index, point in enumerate(points):
-            q = self._validate_target(point["q"])
-            timestamp = float(point.get("time", previous_time))
-            if not math.isfinite(timestamp) or timestamp < previous_time:
-                raise ValueError("轨迹时间戳必须单调递增")
-            delta = timestamp - previous_time
-            duration = start_duration if index == 0 else max(delta / speed, 0.02)
-            self.moveJ(q, duration=duration, kp=kp, kd=kd)
-            self.wait_motion()
-            previous_time = max(timestamp, previous_time)
+        times, positions = [], []
+        # Validate the entire file before the first hardware command.
+        for point in points:
+            if not isinstance(point, dict) or "q" not in point or "time" not in point:
+                raise ValueError("轨迹点必须包含 time 和 q")
+            positions.append(self._validate_target(point["q"]))
+            timestamp = float(point["time"])
+            if (not math.isfinite(timestamp) or timestamp < 0
+                    or (times and timestamp <= times[-1])):
+                raise ValueError("轨迹时间戳必须为非负有限数值且严格递增")
+            times.append(timestamp)
+        scaled_times = [(timestamp - times[0]) / speed for timestamp in times]
+        if (not all(math.isfinite(t) for t in scaled_times)
+                or any(b <= a for a, b in zip(scaled_times, scaled_times[1:]))):
+            raise ValueError("speed 缩放后的轨迹时间戳无效")
+        trajectory = JointTrajectory(scaled_times, positions)
+
+        self.moveJ(positions[0], duration=start_duration, kp=kp, kd=kd)
+        self.wait_motion()
+        if len(points) == 1 or self._stop_event.is_set():
+            return
+
+        from gravity import calc_compensated_torque
+
+        started = time.monotonic()
+        while not self._stop_event.is_set():
+            elapsed = time.monotonic() - started
+            q, dq = trajectory.sample(elapsed)
+            tau1, tau2, tau3 = calc_compensated_torque(
+                self.feedback[1], self.feedback[2], self.feedback[3])
+            torques = (0.0, tau1, tau2, tau3)
+            for index, (motor, data) in enumerate(zip(self.motors, self.feedback)):
+                motor.q, motor.dq, motor.tau = q[index], dq[index], torques[index]
+                self.ser.sendRecv(motor, data)
+            if elapsed >= trajectory.duration:
+                break
+            # Absolute deadlines absorb communication time; missed ticks are
+            # skipped instead of queued or added to every recorded interval.
+            now = time.monotonic()
+            next_tick = math.floor((now - started) / control_period) + 1
+            deadline = started + min(next_tick * control_period, trajectory.duration)
+            self._stop_event.wait(max(0.0, deadline - now))
 
     def stop_motion(self):
         self._stop_event.set()

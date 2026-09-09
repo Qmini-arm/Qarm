@@ -36,9 +36,9 @@ def calc_compensated_torque(dt1, dt2, dt3):
     # mass 和质心位置估算：PI = mass * 9.80665 * sqrt(com_y² + com_z²)。
     # 当前补偿模型假定各段在同一平面内，并把这些值作为 cos() 项的幅值；
     # URDF 的 CAD 零位还可能带有相位偏移，首次上电应从较小比例开始验证。
-    PI_1 = 4.4  # link_2: 0.676212997 kg, r_com=0.258230863 m
-    PI_2 = 1.712549  # link_3: 0.676213000 kg, r_com=0.258249095 m
-    PI_3 = 0.00  # link_6: 0.016653600 kg, r_com=0.017495892 m
+    PI_1 = 4.45  # link_2: 0.676212997 kg, r_com=0.258230863 m
+    PI_2 = 1.8  # link_3: 0.676213000 kg, r_com=0.258249095 m
+    PI_3 = 0.002  # link_6: 0.016653600 kg, r_com=0.017495892 m
 
     q1, q2, q3 = dt1.q, dt2.q, dt3.q
     angle_link_2 = q1

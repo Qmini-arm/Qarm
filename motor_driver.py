@@ -491,6 +491,7 @@ class ArmController:
         if duration <= 0:
             raise ValueError("duration 必须大于 0")
         kp = [1.0] * self.MOTOR_COUNT if kp is None else list(kp)
+        kp[1] = 2.0  # shoulder joint needs more stiffness
         kd = [0.1] * self.MOTOR_COUNT if kd is None else list(kd)
         if len(kp) != self.MOTOR_COUNT or len(kd) != self.MOTOR_COUNT:
             raise ValueError("kp 和 kd 必须包含四个关节值")
@@ -550,6 +551,7 @@ class ArmController:
             raise ValueError("duration 必须大于 0 或为 None")
         kp_values = [0.0] * self.MOTOR_COUNT if kp is None else list(kp)
         kd_values = [0.05] * self.MOTOR_COUNT if kd is None else list(kd)
+        kd_values[1] = 0.1  # shoulder joint needs more damping
         if len(kp_values) != self.MOTOR_COUNT or len(kd_values) != self.MOTOR_COUNT:
             raise ValueError("kp 和 kd 必须包含四个关节值")
 

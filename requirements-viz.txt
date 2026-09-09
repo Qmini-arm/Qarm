@@ -1,0 +1,4 @@
+numpy>=1.24
+pyserial>=3.5,<4
+viser>=1.1
+yourdfpy>=0.0.53

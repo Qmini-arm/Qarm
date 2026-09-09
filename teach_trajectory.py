@@ -1,8 +1,8 @@
 """Qmini 四轴拖动示教与 MoveJ 轨迹回放入口。
 
 示例：
-  python teach_trajectory.py record --port /dev/ttyUSB0 --output trajectories/demo.json
-  python teach_trajectory.py replay --port /dev/ttyUSB0 --input trajectories/demo.json
+  python teach_trajectory.py record --port /dev/ttyUSB0 --enable-hardware --output trajectories/demo.json
+  python teach_trajectory.py replay --port /dev/ttyUSB0 --enable-hardware --input trajectories/demo.json
 
 为避免误触导致真实机械臂动作，两个子命令都要求显式传入 --enable-hardware。
 """
@@ -14,15 +14,16 @@ from motor_driver import ArmController
 
 def build_parser():
     parser = argparse.ArgumentParser(description="Qmini 拖动示教 / MoveJ 回放")
-    parser.add_argument("--port", required=True, help="电机串口，例如 /dev/ttyUSB0")
-    parser.add_argument("--enable-hardware", action="store_true",
+    common = argparse.ArgumentParser(add_help=False)
+    common.add_argument("--port", required=True, help="电机串口，例如 /dev/ttyUSB0")
+    common.add_argument("--enable-hardware", action="store_true",
                         help="确认允许访问真实串口（必需）")
     sub = parser.add_subparsers(dest="action", required=True)
-    record = sub.add_parser("record", help="重力补偿拖动并记录轨迹")
+    record = sub.add_parser("record", parents=[common], help="重力补偿拖动并记录轨迹")
     record.add_argument("--output", required=True, help="JSON 轨迹文件")
     record.add_argument("--duration", type=float, default=None, help="录制秒数，默认 Ctrl-C 结束")
     record.add_argument("--sample-period", type=float, default=0.02, help="采样周期（秒）")
-    replay = sub.add_parser("replay", help="按轨迹逐段调用 MoveJ")
+    replay = sub.add_parser("replay", parents=[common], help="按轨迹逐段调用 MoveJ")
     replay.add_argument("--input", required=True, help="JSON 轨迹文件")
     replay.add_argument("--speed", type=float, default=1.0, help="时间缩放，越大越快")
     replay.add_argument("--start-duration", type=float, default=2.0,
